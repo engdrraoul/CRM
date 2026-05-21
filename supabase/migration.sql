@@ -148,6 +148,11 @@ BEGIN
   END IF;
 END $$;
 
+-- Prisma left updatedAt NOT NULL without a DB default; inserts that omit it fail.
+ALTER TABLE public."Campaign"
+  ALTER COLUMN "createdAt" SET DEFAULT now(),
+  ALTER COLUMN "updatedAt" SET DEFAULT now();
+
 -- Ensure DailyReport.id is generated when clients omit it. Some legacy
 -- deployments have id NOT NULL without a default, which makes inserts fail
 -- with "null value in column id".
