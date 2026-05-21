@@ -131,6 +131,23 @@ GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
 -- ============================================================
 ALTER TABLE public."User" DROP CONSTRAINT IF EXISTS "User_id_fkey";
 
+-- Ensure Campaign.id is generated when clients omit it.
+DO $$
+DECLARE v_campaign_id_type text;
+BEGIN
+  SELECT data_type INTO v_campaign_id_type
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'Campaign'
+    AND column_name = 'id';
+
+  IF v_campaign_id_type = 'uuid' THEN
+    ALTER TABLE public."Campaign" ALTER COLUMN id SET DEFAULT gen_random_uuid();
+  ELSIF v_campaign_id_type IS NOT NULL THEN
+    ALTER TABLE public."Campaign" ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+  END IF;
+END $$;
+
 -- Ensure DailyReport.id is generated when clients omit it. Some legacy
 -- deployments have id NOT NULL without a default, which makes inserts fail
 -- with "null value in column id".

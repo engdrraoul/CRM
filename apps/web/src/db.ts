@@ -128,7 +128,7 @@ export async function getCampaignsLite(options?: { force?: boolean }): Promise<C
 export async function createCampaign(name: string) {
   const { data, error } = await supabase
     .from("Campaign")
-    .insert({ name: name.trim(), active: true })
+    .insert({ id: crypto.randomUUID(), name: name.trim(), active: true })
     .select()
     .single();
   if (error) fail(error, "Impossible de créer la campagne");
