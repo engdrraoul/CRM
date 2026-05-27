@@ -120,11 +120,119 @@
   border-color: #047857;
 }
 
-.quality-filters {
+.quality-filters-card {
+  margin-bottom: 20px;
+  padding: 20px 24px;
+}
+
+.quality-filters-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.quality-filters-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.quality-filters-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   align-items: end;
+}
+
+.quality-filters-row-dates {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.quality-filter-field {
+  min-width: 0 !important;
+  margin-bottom: 0 !important;
+  flex: none !important;
+}
+
+.quality-filter-field .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quality-filter-field .select,
+.quality-filter-field .input {
+  width: 100%;
+  min-height: 42px;
+}
+
+.quality-filters-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  min-height: 42px;
+}
+
+.quality-filters-actions .btn {
+  width: 100%;
+  min-width: 140px;
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.quality-filters-active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.quality-filter-tag {
+  display: inline-flex;
+  padding: 4px 10px;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--primary);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .quality-filters-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-filters-row-dates {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-filters-actions .btn {
+    width: 100%;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .quality-filters-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quality-filters-row-dates {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .quality-filters-row-dates .quality-filters-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 .quality-kpi-grid {

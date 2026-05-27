@@ -9,9 +9,13 @@ import {
   Plus,
   Printer,
   Save,
+  Calendar,
+  Filter,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
+  Target,
   Trash2,
   UserCircle,
 } from "lucide-react";
@@ -332,50 +336,153 @@ export function QualitePage() {
   const showForm = tab === "nouvelle" || tab === "detail";
   const isActiveTab = (id: Tab) => tab === id || (id === "liste" && tab === "detail");
 
+  const hasActiveFilters = !!(filterAgent || filterCampaign || filterEvaluator || filterFrom || filterTo);
+
+  const resetFilters = () => {
+    setFilterAgent("");
+    setFilterCampaign("");
+    setFilterEvaluator("");
+    setFilterFrom("");
+    setFilterTo("");
+  };
+
   const filtersBlock = (
-    <div className="card" style={{ marginBottom: 20 }}>
-      <p className="quality-section-title" style={{ marginBottom: 14 }}>Filtres</p>
-      <div className="quality-filters">
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="label">Conseiller</label>
-          <select className="select" value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)}>
-            <option value="">Tous</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{displayName(a)}</option>
-            ))}
-          </select>
+    <div className="quality-filters-card card">
+      <div className="quality-filters-head">
+        <div>
+          <h3 style={{ margin: 0, fontSize: "1rem" }}>Filtrer les écoutes</h3>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+            Affinez l&apos;historique et le pilotage par période, conseiller ou coach.
+          </p>
         </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="label">Campagne</label>
-          <select className="select" value={filterCampaign} onChange={(e) => setFilterCampaign(e.target.value)}>
-            <option value="">Toutes</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="label">Coach / Évaluateur</label>
-          <select className="select" value={filterEvaluator} onChange={(e) => setFilterEvaluator(e.target.value)}>
-            <option value="">Tous</option>
-            {evaluators.map((e) => (
-              <option key={e.id} value={e.id}>{displayName(e)}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="label">Du</label>
-          <input type="date" className="input" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="label">Au</label>
-          <input type="date" className="input" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
-        </div>
-        <button type="button" className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
-          <Search size={16} />
-          {loading ? "..." : "Actualiser"}
-        </button>
+        {hasActiveFilters && (
+          <button type="button" className="btn btn-secondary" onClick={resetFilters}>
+            <RotateCcw size={16} />
+            Réinitialiser
+          </button>
+        )}
       </div>
+
+      <div className="quality-filters-body">
+        <div className="quality-filters-row">
+          <div className="field quality-filter-field">
+            <label className="label" htmlFor="q-filter-agent">
+              <UserCircle size={14} />
+              Conseiller
+            </label>
+            <select
+              id="q-filter-agent"
+              className="select"
+              value={filterAgent}
+              onChange={(e) => setFilterAgent(e.target.value)}
+            >
+              <option value="">Tous les conseillers</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>{displayName(a)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field quality-filter-field">
+            <label className="label" htmlFor="q-filter-campaign">
+              <Target size={14} />
+              Campagne
+            </label>
+            <select
+              id="q-filter-campaign"
+              className="select"
+              value={filterCampaign}
+              onChange={(e) => setFilterCampaign(e.target.value)}
+            >
+              <option value="">Toutes les campagnes</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field quality-filter-field">
+            <label className="label" htmlFor="q-filter-evaluator">
+              <ShieldCheck size={14} />
+              Coach qualité
+            </label>
+            <select
+              id="q-filter-evaluator"
+              className="select"
+              value={filterEvaluator}
+              onChange={(e) => setFilterEvaluator(e.target.value)}
+            >
+              <option value="">Tous les coaches</option>
+              {evaluators.map((e) => (
+                <option key={e.id} value={e.id}>{displayName(e)}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="quality-filters-row quality-filters-row-dates">
+          <div className="field quality-filter-field">
+            <label className="label" htmlFor="q-filter-from">
+              <Calendar size={14} />
+              Du
+            </label>
+            <input
+              id="q-filter-from"
+              type="date"
+              className="input"
+              value={filterFrom}
+              onChange={(e) => setFilterFrom(e.target.value)}
+            />
+          </div>
+          <div className="field quality-filter-field">
+            <label className="label" htmlFor="q-filter-to">
+              <Calendar size={14} />
+              Au
+            </label>
+            <input
+              id="q-filter-to"
+              type="date"
+              className="input"
+              value={filterTo}
+              min={filterFrom || undefined}
+              onChange={(e) => setFilterTo(e.target.value)}
+            />
+          </div>
+          <div className="quality-filters-actions">
+            <button type="button" className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
+              <Search size={16} />
+              {loading ? "Chargement..." : "Appliquer"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {hasActiveFilters && (
+        <div className="quality-filters-active">
+          <Filter size={14} />
+          <span>Filtres actifs</span>
+          {filterAgent && (() => {
+            const a = agents.find((x) => x.id === filterAgent);
+            return a ? (
+              <span className="quality-filter-tag">Conseiller : {displayName(a)}</span>
+            ) : null;
+          })()}
+          {filterCampaign && (
+            <span className="quality-filter-tag">
+              Campagne : {campaigns.find((c) => c.id === filterCampaign)?.name}
+            </span>
+          )}
+          {filterEvaluator && (() => {
+            const e = evaluators.find((x) => x.id === filterEvaluator);
+            return e ? (
+              <span className="quality-filter-tag">Coach : {displayName(e)}</span>
+            ) : null;
+          })()}
+          {(filterFrom || filterTo) && (
+            <span className="quality-filter-tag">
+              Période : {filterFrom ? fmtDate(filterFrom) : "…"} → {filterTo ? fmtDate(filterTo) : "…"}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 
