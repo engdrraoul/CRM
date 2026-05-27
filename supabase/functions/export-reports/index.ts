@@ -95,17 +95,27 @@ serve(async (req) => {
     }
     // ─────────────────────────────────────────────────────────────
 
-    // campaignId is optional — omit / null → export ALL campaigns
-    // groupBy: "campaign" → one sheet per campaign (default when no campaignId)
+    // campaignIds: null / [] → all campaigns; [id] → one; [id1, id2] → subset
+    // groupBy: "campaign" → one sheet per campaign (default for multi/all)
     //          "all"      → single sheet
-    const { campaignId, dateFrom, dateTo, groupBy = "campaign" } = await req.json();
+    const { campaignId, campaignIds, dateFrom, dateTo, groupBy = "campaign" } = await req.json();
+
+    const effectiveIds: string[] | null = (() => {
+      if (Array.isArray(campaignIds) && campaignIds.length > 0) return campaignIds;
+      if (campaignId) return [campaignId];
+      return null;
+    })();
 
     const fields =
       `select=date,campaign:Campaign(id,name),user:User!userId(name,email),` +
       `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status,observations`;
 
     const filters: string[] = [];
-    if (campaignId) filters.push(`campaignId=eq.${encodeURIComponent(campaignId)}`);
+    if (effectiveIds?.length === 1) {
+      filters.push(`campaignId=eq.${encodeURIComponent(effectiveIds[0])}`);
+    } else if (effectiveIds && effectiveIds.length > 1) {
+      filters.push(`campaignId=in.(${effectiveIds.map((id) => encodeURIComponent(id)).join(",")})`);
+    }
     if (dateFrom)   filters.push(`date=gte.${encodeURIComponent(dateFrom)}`);
     if (dateTo)     filters.push(`date=lte.${encodeURIComponent(dateTo)}`);
     filters.push("order=date.asc");
@@ -147,7 +157,8 @@ serve(async (req) => {
 
     const sheets: string[] = [];
     const usedSheetNames = new Set<string>();
-    if (!campaignId && groupBy === "campaign") {
+    const multiSheetMode = !effectiveIds || effectiveIds.length !== 1;
+    if (multiSheetMode && groupBy === "campaign") {
       // One sheet per campaign
       const byCampaign: Record<string, any[]> = {};
       for (const r of reports) {
@@ -209,7 +220,11 @@ serve(async (req) => {
     const BOM = "\xEF\xBB\xBF";
     const body = new TextEncoder().encode(BOM + xml);
 
-    const label = campaignId ? `_campagne` : `_toutes_campagnes`;
+    const label = effectiveIds?.length === 1
+      ? `_campagne`
+      : effectiveIds && effectiveIds.length > 1
+        ? `_${effectiveIds.length}_campagnes`
+        : `_toutes_campagnes`;
     const filename = `reporting${label}_${Date.now()}.xls`;
 
     return new Response(body, {

@@ -3004,7 +3004,7 @@ function getPresetRange(preset: string): { from: string; to: string } {
 
 export function ExportPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [campaignId, setCampaignId] = useState(""); // "" = all campaigns
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<"campaign" | "all">("campaign");
   const [dateFrom, setDateFrom] = useState(getPresetRange("this_month").from);
   const [dateTo,   setDateTo]   = useState(getPresetRange("this_month").to);
@@ -3013,12 +3013,34 @@ export function ExportPage() {
 
   useEffect(() => {
     getCampaignsLite()
-      .then(setCampaigns)
+      .then((list) => {
+        setCampaigns(list);
+        setSelectedCampaignIds(list.map((c) => c.id));
+      })
       .catch((err) => {
         console.error("[Export] getCampaigns failed", err);
         toast.error(err?.message || "Impossible de charger les campagnes");
       });
   }, []);
+
+  const allCampaignsSelected =
+    campaigns.length > 0 && selectedCampaignIds.length === campaigns.length;
+
+  const exportCampaignIds = allCampaignsSelected ? null : selectedCampaignIds;
+
+  function toggleAllCampaigns() {
+    if (allCampaignsSelected) {
+      setSelectedCampaignIds([]);
+    } else {
+      setSelectedCampaignIds(campaigns.map((c) => c.id));
+    }
+  }
+
+  function toggleCampaign(id: string) {
+    setSelectedCampaignIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   function applyPreset(p: string) {
     setPreset(p);
@@ -3033,13 +3055,15 @@ export function ExportPage() {
     setBusy(true);
     const tId = toast.loading("Génération du fichier Excel...");
     try {
-      const blob = await exportReports(campaignId || null, dateFrom, dateTo, groupBy);
+      const blob = await exportReports(exportCampaignIds, dateFrom, dateTo, groupBy);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const label = campaignId
-        ? campaigns.find(c => c.id === campaignId)?.name || campaignId
-        : "toutes_campagnes";
+      const label = allCampaignsSelected
+        ? "toutes_campagnes"
+        : selectedCampaignIds.length === 1
+          ? (campaigns.find((c) => c.id === selectedCampaignIds[0])?.name || "campagne")
+          : `${selectedCampaignIds.length}_campagnes`;
       const ext = blob.type.includes("ms-excel") || blob.type.includes("xml") ? "xls" : "xlsx";
       const datePart = dateFrom && dateTo ? `_${dateFrom}_${dateTo}` : "";
       a.download = `reporting_${label.replace(/\s+/g, "_")}${datePart}.${ext}`;
@@ -3131,25 +3155,69 @@ export function ExportPage() {
             </div>
           </div>
 
-          {/* ── Campagne ── */}
+          {/* ── Campagnes ── */}
           <div className="field">
-            <label className="label" htmlFor="export-campaign">
+            <label className="label">
               <Target size={14} style={{ marginRight: 6 }} />
-              Campagne
+              Campagnes
             </label>
-            <select
-              id="export-campaign"
-              className="select"
-              value={campaignId}
-              onChange={(e) => setCampaignId(e.target.value)}
+            <div
+              style={{
+                border: "1px solid #e2e8f0",
+                borderRadius: 8,
+                padding: "12px 14px",
+                maxHeight: 220,
+                overflowY: "auto",
+                display: "grid",
+                gap: 10,
+              }}
             >
-              <option value="">Toutes les campagnes</option>
-              {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  paddingBottom: 8,
+                  borderBottom: "1px solid #e2e8f0",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allCampaignsSelected}
+                  onChange={toggleAllCampaigns}
+                  style={{ accentColor: "var(--primary)" }}
+                />
+                Toutes les campagnes
+              </label>
+              {campaigns.map((c) => (
+                <label
+                  key={c.id}
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedCampaignIds.includes(c.id)}
+                    onChange={() => toggleCampaign(c.id)}
+                    style={{ accentColor: "var(--primary)" }}
+                  />
+                  {c.name}
+                </label>
+              ))}
+              {campaigns.length === 0 && (
+                <p className="muted" style={{ fontSize: 13, margin: 0 }}>Aucune campagne disponible</p>
+              )}
+            </div>
+            {selectedCampaignIds.length === 0 && (
+              <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                Sélectionnez au moins une campagne pour exporter.
+              </p>
+            )}
           </div>
 
-          {/* ── Organisation (visible uniquement si toutes les campagnes) ── */}
-          {!campaignId && (
+          {/* ── Organisation (plusieurs campagnes ou toutes) ── */}
+          {selectedCampaignIds.length !== 1 && (
             <div className="field">
               <label className="label">Organisation du classeur</label>
               <div style={{ display: "flex", gap: 12 }}>
@@ -3194,7 +3262,7 @@ export function ExportPage() {
           <button
             className="btn btn-primary"
             style={{ height: "48px", fontSize: 15, marginTop: 4 }}
-            disabled={busy || !dateFrom || !dateTo}
+            disabled={busy || !dateFrom || !dateTo || selectedCampaignIds.length === 0}
             onClick={doExport}
           >
             {busy ? (
@@ -3207,9 +3275,9 @@ export function ExportPage() {
             )}
           </button>
 
-          {!campaignId && groupBy === "campaign" && (
+          {selectedCampaignIds.length !== 1 && groupBy === "campaign" && (
             <p className="muted" style={{ fontSize: 12, marginTop: -12 }}>
-              Le classeur contiendra une feuille de résumé + une feuille par campagne active sur la période.
+              Le classeur contiendra une feuille de résumé + une feuille par campagne sélectionnée.
             </p>
           )}
         </div>
@@ -3684,7 +3752,9 @@ export function ReportingCampagnesPage() {
       }
 
       const datePart = dateFrom && dateTo ? `_${dateFrom}_${dateTo}` : "";
-      const campaignPart = campaignId ? `_${campaignId}` : "";
+      const campaignPart = campaignId
+        ? `_${(selectedCampaign?.name || "campagne").replace(/\s+/g, "_")}`
+        : "";
       pdf.save(`reporting_campagnes${campaignPart}${datePart}.pdf`);
       toast.success("Export PDF téléchargé");
     } catch (err: any) {
@@ -3726,6 +3796,23 @@ export function ReportingCampagnesPage() {
   }, [campaignId, dailySummaries, summaries]);
 
   const totalConversion = totals.handled > 0 ? ((totals.rdvTotal / totals.handled) * 100).toFixed(1) : '0.0';
+
+  const formatReportDate = (iso: string) =>
+    iso ? new Date(iso + "T12:00:00").toLocaleDateString("fr-FR") : "";
+
+  const allWorkers = useMemo(() => {
+    const names = new Set<string>();
+    if (campaignId) {
+      dailySummaries.forEach((d) => (d.workers || []).forEach((w) => names.add(w)));
+    } else {
+      summaries.forEach((s) => (s.workers || []).forEach((w) => names.add(w)));
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "fr"));
+  }, [campaignId, dailySummaries, summaries]);
+
+  const reportTitle = campaignId
+    ? selectedCampaign?.name || "Campagne"
+    : "Toutes les campagnes";
 
   return (
     <div>
@@ -3812,15 +3899,24 @@ export function ReportingCampagnesPage() {
       ) : (
         <div className="card" style={{ overflowX: "auto", padding: 0 }}>
           <div ref={reportingRef} style={{ padding: 16 }}>
-            {campaignId ? (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>
-                  Rapport du {dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : ""} au {dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : ""}
-                </div>
-                <div className="muted" style={{ fontSize: 13 }}>
-                  Campagne : <span style={{ fontWeight: 700, color: "var(--text)" }}>{selectedCampaign?.name || ""}</span>
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+                Rapport du {formatReportDate(dateFrom)} au {formatReportDate(dateTo)}
+              </div>
+              <div className="muted" style={{ fontSize: 13, marginBottom: 4 }}>
+                {campaignId ? "Campagne" : "Périmètre"} :{" "}
+                <span style={{ fontWeight: 700, color: "var(--text)" }}>{reportTitle}</span>
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 10 }}>
+                <span style={{ fontWeight: 600 }}>Téléconseillers : </span>
+                {allWorkers.length > 0 ? (
+                  <span style={{ color: "var(--text-muted)" }}>{allWorkers.join(", ")}</span>
+                ) : (
+                  <span className="muted">Aucun</span>
+                )}
+              </div>
+              {campaignId ? (
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
                     <div className="muted" style={{ fontSize: 12 }}>Appels reçus</div>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</div>
@@ -3838,8 +3934,8 @@ export function ReportingCampagnesPage() {
                     <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--success)' }}>{totals.rdvTotal.toLocaleString('fr-FR')}</div>
                   </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
 
             <table style={{ margin: 0, minWidth: campaignId ? "860px" : "900px" }}>
             <thead>

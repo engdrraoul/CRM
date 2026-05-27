@@ -570,13 +570,19 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const XLS_MIME = "application/vnd.ms-excel";
 
 export async function exportReports(
-  campaignId: string | null,
+  campaignIds: string[] | null,
   dateFrom?: string,
   dateTo?: string,
   groupBy: "campaign" | "all" = "campaign",
 ): Promise<Blob> {
   const { data, error } = await supabase.functions.invoke("export-reports", {
-    body: { campaignId: campaignId || null, dateFrom, dateTo, groupBy },
+    body: {
+      campaignIds: campaignIds?.length ? campaignIds : null,
+      campaignId: campaignIds?.length === 1 ? campaignIds[0] : null,
+      dateFrom,
+      dateTo,
+      groupBy,
+    },
   });
   if (error) await failFunction(error, "Impossible d'exporter les rapports");
 
