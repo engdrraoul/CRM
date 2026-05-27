@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   BarChart3,
@@ -6,20 +6,24 @@ import {
   ClipboardList,
   Headphones,
   Plus,
+  Printer,
   Save,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import type { Campaign, QualityEvaluation } from "@crc/types";
+import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
 import { useAuth } from "./auth";
 import {
   deleteQualityEvaluation,
   getCampaignsLite,
   getQualityEvaluation,
   getQualityEvaluations,
+  getQualityReferential,
   getUsersLite,
   saveQualityEvaluation,
+  saveQualityReferential,
 } from "./db";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { useAsync } from "./hooks/useAsync";
@@ -27,31 +31,17 @@ import {
   QUALITY_CHANNELS,
   computeQualityResult,
   domainGroups,
+  domainScore,
   emptyQualityScores,
+  getDefaultReferential,
+  rubricLabel,
   scoreOptions,
 } from "./lib/quality-scoring";
 import { QUALITY_GUIDE } from "./lib/quality-guide";
+import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
+import { fmtDate, fmtPercent, statusBadge } from "./lib/quality-utils";
 
-type Tab = "guide" | "dashboard" | "liste" | "nouvelle" | "detail";
-
-function fmtDate(iso: string) {
-  if (!iso) return "";
-  return new Date(iso + "T12:00:00").toLocaleDateString("fr-FR");
-}
-
-function statusBadge(status: string) {
-  const colors: Record<string, { bg: string; color: string }> = {
-    Conforme: { bg: "rgba(34,197,94,0.12)", color: "#15803d" },
-    "Coaching prioritaire": { bg: "rgba(234,179,8,0.15)", color: "#a16207" },
-    "Action immédiate": { bg: "rgba(239,68,68,0.12)", color: "#b91c1c" },
-  };
-  const s = colors[status] || { bg: "#f1f5f9", color: "#475569" };
-  return (
-    <span className="badge" style={{ background: s.bg, color: s.color, fontSize: 11 }}>
-      {status}
-    </span>
-  );
-}
+type Tab = "guide" | "referentiel" | "dashboard" | "liste" | "nouvelle" | "detail";
 
 export function QualitePage() {
   const { user } = useAuth();
@@ -71,6 +61,7 @@ export function QualitePage() {
   const [filterTo, setFilterTo] = useState("");
 
   const [formDate, setFormDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formExternalCallId, setFormExternalCallId] = useState("");
   const [formAgentId, setFormAgentId] = useState("");
   const [formCampaignId, setFormCampaignId] = useState("");
   const [formChannel, setFormChannel] = useState<string>(QUALITY_CHANNELS[0]);
@@ -81,7 +72,11 @@ export function QualitePage() {
   const [formDebriefDate, setFormDebriefDate] = useState("");
   const [formDebriefConclusion, setFormDebriefConclusion] = useState("");
 
-  const computed = useMemo(() => computeQualityResult(formScores), [formScores]);
+  const [referential, setReferential] = useState<QualityReferentialConfig>(getDefaultReferential());
+  const [refDraft, setRefDraft] = useState<QualityReferentialConfig>(getDefaultReferential());
+  const printRef = useRef<HTMLDivElement>(null);
+
+  const computed = useMemo(() => computeQualityResult(formScores, referential), [formScores, referential]);
 
   const loadMeta = () => {
     getCampaignsLite().then(setCampaigns).catch(console.error);
@@ -111,12 +106,27 @@ export function QualitePage() {
   useEffect(() => { loadMeta(); }, []);
   useEffect(() => { loadEvaluations(); }, [filterAgent, filterCampaign, filterEvaluator, filterFrom, filterTo]);
 
+  useEffect(() => {
+    getQualityReferential()
+      .then((cfg) => {
+        const next = cfg || getDefaultReferential();
+        setReferential(next);
+        setRefDraft(structuredClone(next));
+      })
+      .catch(() => {
+        const fallback = getDefaultReferential();
+        setReferential(fallback);
+        setRefDraft(structuredClone(fallback));
+      });
+  }, []);
+
   const resetForm = () => {
     setFormDate(new Date().toISOString().slice(0, 10));
+    setFormExternalCallId("");
     setFormAgentId("");
     setFormCampaignId("");
     setFormChannel(QUALITY_CHANNELS[0]);
-    setFormScores(emptyQualityScores());
+    setFormScores(emptyQualityScores(referential));
     setFormComments({});
     setFormPositive("");
     setFormActionPlan("");
@@ -130,10 +140,11 @@ export function QualitePage() {
       const ev = await getQualityEvaluation(id);
       setSelectedId(id);
       setFormDate(ev.evaluatedAt.slice(0, 10));
+      setFormExternalCallId(ev.externalCallId || "");
       setFormAgentId(ev.agent.id);
       setFormCampaignId(ev.campaign?.id || "");
       setFormChannel(ev.channel);
-      setFormScores({ ...emptyQualityScores(), ...ev.scores });
+      setFormScores({ ...emptyQualityScores(referential), ...ev.scores });
       setFormComments(ev.comments || {});
       setFormPositive(ev.positivePoints || "");
       setFormActionPlan(ev.actionPlan || "");
@@ -149,17 +160,19 @@ export function QualitePage() {
     run(async () => {
       if (!user?.id) throw new Error("Non authentifié");
       if (!formAgentId) throw new Error("Sélectionnez un conseiller");
-      const result = computeQualityResult(formScores);
+      const result = computeQualityResult(formScores, referential);
       await saveQualityEvaluation({
         id: selectedId || undefined,
         evaluatedAt: formDate,
         agentUserId: formAgentId,
         evaluatorUserId: user.id,
         campaignId: formCampaignId || null,
+        externalCallId: formExternalCallId.trim() || null,
         channel: formChannel,
         scores: formScores,
         totalPoints: result.totalPoints,
         finalScore: result.finalScore,
+        finalPercent: result.finalPercent,
         mention: result.mention,
         status: result.status,
         improvementAreas: result.improvementAreas,
@@ -180,20 +193,53 @@ export function QualitePage() {
 
   const kpis = useMemo(() => {
     const n = evaluations.length;
-    if (!n) return { count: 0, avg: 0, conformeRate: 0, coaching: 0, immediate: 0 };
+    if (!n) return { count: 0, avg: 0, avgPercent: 0, conformeRate: 0, coaching: 0, immediate: 0 };
     const avg = evaluations.reduce((s, e) => s + e.finalScore, 0) / n;
+    const avgPct = evaluations.reduce((s, e) => s + (e.finalPercent ?? fmtPercent(e.finalScore)), 0) / n;
     const conforme = evaluations.filter((e) => e.conform).length;
     return {
       count: n,
       avg: Math.round(avg * 10) / 10,
+      avgPercent: Math.round(avgPct * 10) / 10,
       conformeRate: Math.round((conforme / n) * 100),
       coaching: evaluations.filter((e) => e.coachingPriority).length,
       immediate: evaluations.filter((e) => e.immediateAction).length,
     };
   }, [evaluations]);
 
+  const agentStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { name: string; count: number; sum: number; sumPct: number; conform: number; coaching: number; immediate: number }
+    >();
+    for (const ev of evaluations) {
+      const id = ev.agent.id;
+      const name = ev.agent.name || ev.agent.email;
+      const cur = map.get(id) || { name, count: 0, sum: 0, sumPct: 0, conform: 0, coaching: 0, immediate: 0 };
+      cur.count += 1;
+      cur.sum += ev.finalScore;
+      cur.sumPct += ev.finalPercent ?? fmtPercent(ev.finalScore);
+      if (ev.conform) cur.conform += 1;
+      if (ev.coachingPriority) cur.coaching += 1;
+      if (ev.immediateAction) cur.immediate += 1;
+      map.set(id, cur);
+    }
+    return Array.from(map.entries())
+      .map(([id, s]) => ({
+        id,
+        name: s.name,
+        count: s.count,
+        avgScore: Math.round((s.sum / s.count) * 10) / 10,
+        avgPercent: Math.round((s.sumPct / s.count) * 10) / 10,
+        conformRate: Math.round((s.conform / s.count) * 100),
+        coaching: s.coaching,
+        immediate: s.immediate,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  }, [evaluations]);
+
   const domainStats = useMemo(() => {
-    return domainGroups().map(({ domain, criteria }) => {
+    return domainGroups(referential).map(({ domain, criteria }) => {
       const max = criteria.reduce((s, c) => s + c.maxPoints, 0);
       let sum = 0;
       let count = 0;
@@ -202,17 +248,47 @@ export function QualitePage() {
           const v = ev.scores[c.id];
           if (typeof v === "number") sum += v;
         }
-        count++;
+        count += 1;
       }
-      return { domain, avg: count ? Math.round((sum / count) * 10) / 10 : 0, max };
+      const avg = count ? Math.round((sum / count) * 10) / 10 : 0;
+      return { domain, avg, max, percent: max ? Math.round((avg / max) * 1000) / 10 : 0 };
     });
-  }, [evaluations]);
+  }, [evaluations, referential]);
 
   const tabs: { id: Tab; label: string; icon: typeof BarChart3 }[] = [
     { id: "guide", label: "Guide (Lisez-moi)", icon: BookOpen },
+    { id: "referentiel", label: "Référentiel", icon: Settings },
     { id: "dashboard", label: "Dashboard", icon: BarChart3 },
     { id: "liste", label: "Écoutes", icon: ClipboardList },
     { id: "nouvelle", label: "Nouvelle écoute", icon: Plus },
+  ];
+
+  const selectedAgent = agents.find((a) => a.id === formAgentId);
+  const selectedCampaign = campaigns.find((c) => c.id === formCampaignId);
+
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    printQualityGrille(printRef.current);
+  };
+
+  const handleSaveReferential = () =>
+    run(async () => {
+      if (!user?.id) throw new Error("Non authentifié");
+      const saved = await saveQualityReferential(refDraft, user.id);
+      setReferential(structuredClone(saved));
+      setRefDraft(structuredClone(saved));
+      toast.success("Référentiel enregistré");
+    }).catch((err: any) => toast.error(err?.message || "Enregistrement impossible"));
+
+  const thresholdFields: { key: keyof QualityReferentialConfig["thresholds"]; label: string }[] = [
+    { key: "plafondMinusOne", label: "Plafond si -1" },
+    { key: "plafondBlocking", label: "Plafond si bloquant < 2" },
+    { key: "conformeMin", label: "Seuil conforme (min /20)" },
+    { key: "coachingMax", label: "Seuil coaching (max /20)" },
+    { key: "mentionExcellent", label: "Mention Excellent (min)" },
+    { key: "mentionTresSatisfaisant", label: "Mention Très satisfaisant (min)" },
+    { key: "mentionSatisfaisant", label: "Mention Satisfaisant (min)" },
+    { key: "mentionAmeliorer", label: "Mention À améliorer (min)" },
   ];
 
   const showForm = tab === "nouvelle" || tab === "detail";
@@ -363,6 +439,104 @@ export function QualitePage() {
         </div>
       )}
 
+      {tab === "referentiel" && (
+        <div style={{ display: "grid", gap: 20 }}>
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Seuils & plafonds</h3>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+              Équivalent feuille Excel <strong>1_Referentiel</strong> — seuils utilisés pour mentions, statuts et plafonnements.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+              {thresholdFields.map(({ key, label }) => (
+                <div key={key} className="field" style={{ marginBottom: 0 }}>
+                  <label className="label">{label}</label>
+                  <input
+                    type="number"
+                    className="input"
+                    min={0}
+                    max={20}
+                    step={0.5}
+                    value={refDraft.thresholds[key]}
+                    onChange={(e) =>
+                      setRefDraft((prev) => ({
+                        ...prev,
+                        thresholds: { ...prev.thresholds, [key]: Number(e.target.value) },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {domainGroups(refDraft).map(({ domain, criteria }) => (
+            <div key={domain} className="card">
+              <h3>{domain}</h3>
+              <div style={{ display: "grid", gap: 20, marginTop: 12 }}>
+                {criteria.map((criterion) => (
+                  <div key={criterion.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 16 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                      {criterion.name}
+                      {criterion.blocking && (
+                        <span className="badge" style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "#b91c1c", fontSize: 10 }}>
+                          BLOQUANT
+                        </span>
+                      )}
+                      <span className="muted" style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
+                        Max {criterion.maxPoints} pts
+                      </span>
+                    </div>
+                    <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>{criterion.expected}</p>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {scoreOptions(criterion).map((score) => (
+                        <div key={score} className="field" style={{ marginBottom: 0 }}>
+                          <label className="label" style={{ fontSize: 12 }}>
+                            Barème {score}
+                          </label>
+                          <textarea
+                            className="input"
+                            rows={2}
+                            value={criterion.rubrics?.[String(score)] || ""}
+                            onChange={(e) =>
+                              setRefDraft((prev) => ({
+                                ...prev,
+                                criteria: prev.criteria.map((c) =>
+                                  c.id === criterion.id
+                                    ? { ...c, rubrics: { ...c.rubrics, [String(score)]: e.target.value } }
+                                    : c,
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button className="btn btn-primary" disabled={busy} onClick={handleSaveReferential}>
+              <Save size={18} />
+              {busy ? "Enregistrement..." : "Enregistrer le référentiel"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                const def = getDefaultReferential();
+                setRefDraft(def);
+                toast.message("Référentiel par défaut rechargé (non enregistré)");
+              }}
+            >
+              Réinitialiser (Excel)
+            </button>
+          </div>
+        </div>
+      )}
+
       {(tab === "dashboard" || tab === "liste") && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="responsive-filters">
@@ -406,6 +580,7 @@ export function QualitePage() {
             {[
               { label: "Écoutes", value: kpis.count },
               { label: "Note moyenne /20", value: kpis.avg },
+              { label: "Moyenne %", value: `${kpis.avgPercent}%` },
               { label: "Taux conformité", value: `${kpis.conformeRate}%` },
               { label: "Coaching prioritaire", value: kpis.coaching },
               { label: "Action immédiate", value: kpis.immediate },
@@ -416,6 +591,44 @@ export function QualitePage() {
               </div>
             ))}
           </div>
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Statistiques globales par conseiller</h3>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              Chaque agent dispose de ses indicateurs agrégés sur la période filtrée (équivalent feuille 4_Dashboard).
+            </p>
+            {agentStats.length === 0 ? (
+              <p className="muted">Aucune écoute sur la période.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ margin: 0, minWidth: 720 }}>
+                  <thead>
+                    <tr>
+                      <th>Conseiller</th>
+                      <th style={{ textAlign: "right" }}>Écoutes</th>
+                      <th style={{ textAlign: "right" }}>Moy. /20</th>
+                      <th style={{ textAlign: "right" }}>Moy. %</th>
+                      <th style={{ textAlign: "right" }}>Conformité</th>
+                      <th style={{ textAlign: "right" }}>Coaching</th>
+                      <th style={{ textAlign: "right" }}>Action imm.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentStats.map((a) => (
+                      <tr key={a.id}>
+                        <td style={{ fontWeight: 600 }}>{a.name}</td>
+                        <td style={{ textAlign: "right" }}>{a.count}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{a.avgScore}</td>
+                        <td style={{ textAlign: "right" }}>{a.avgPercent}%</td>
+                        <td style={{ textAlign: "right" }}>{a.conformRate}%</td>
+                        <td style={{ textAlign: "right" }}>{a.coaching}</td>
+                        <td style={{ textAlign: "right" }}>{a.immediate}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
           <div className="card">
             <h3>Performance par domaine</h3>
             <table style={{ marginTop: 12 }}>
@@ -424,6 +637,7 @@ export function QualitePage() {
                   <th>Domaine</th>
                   <th style={{ textAlign: "right" }}>Moyenne pts</th>
                   <th style={{ textAlign: "right" }}>Max</th>
+                  <th style={{ textAlign: "right" }}>%</th>
                 </tr>
               </thead>
               <tbody>
@@ -432,6 +646,7 @@ export function QualitePage() {
                     <td>{d.domain}</td>
                     <td style={{ textAlign: "right", fontWeight: 600 }}>{d.avg}</td>
                     <td style={{ textAlign: "right" }} className="muted">{d.max}</td>
+                    <td style={{ textAlign: "right" }}>{d.percent}%</td>
                   </tr>
                 ))}
               </tbody>
@@ -451,10 +666,12 @@ export function QualitePage() {
               <thead>
                 <tr>
                   <th>Date</th>
+                  <th>ID appel</th>
                   <th>Conseiller</th>
                   <th>Campagne</th>
                   <th>Canal</th>
                   <th style={{ textAlign: "right" }}>Note /20</th>
+                  <th style={{ textAlign: "right" }}>%</th>
                   <th>Mention</th>
                   <th>Statut</th>
                   <th>Évaluateur</th>
@@ -465,10 +682,14 @@ export function QualitePage() {
                 {evaluations.map((ev) => (
                   <tr key={ev.id}>
                     <td>{fmtDate(ev.evaluatedAt.slice(0, 10))}</td>
+                    <td className="muted" style={{ fontSize: 12, fontFamily: "monospace" }}>
+                      {ev.externalCallId || "—"}
+                    </td>
                     <td style={{ fontWeight: 600 }}>{ev.agent.name || ev.agent.email}</td>
                     <td>{ev.campaign?.name || "—"}</td>
                     <td>{ev.channel}</td>
                     <td style={{ textAlign: "right", fontWeight: 700 }}>{ev.finalScore}</td>
+                    <td style={{ textAlign: "right" }}>{ev.finalPercent ?? fmtPercent(ev.finalScore)}%</td>
                     <td>{ev.mention}</td>
                     <td>{statusBadge(ev.status)}</td>
                     <td className="muted" style={{ fontSize: 12 }}>{ev.evaluator.name || ev.evaluator.email}</td>
@@ -488,11 +709,30 @@ export function QualitePage() {
       {showForm && (
         <div style={{ display: "grid", gap: 20 }}>
           <div className="card">
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <Headphones size={20} />
               {tab === "detail" ? "Grille d'écoute" : "Nouvelle écoute"}
+              {tab === "detail" && (
+                <button type="button" className="btn btn-secondary" style={{ marginLeft: "auto", fontSize: 13 }} onClick={handlePrint}>
+                  <Printer size={16} />
+                  Imprimer la grille
+                </button>
+              )}
             </h3>
             <div className="responsive-filters" style={{ marginTop: 16 }}>
+              <div className="field" style={{ marginBottom: 0, gridColumn: "1 / -1" }}>
+                <label className="label">ID appel Ubicentrex</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={formExternalCallId}
+                  onChange={(e) => setFormExternalCallId(e.target.value)}
+                  placeholder="Copiez la référence de l'enregistrement depuis Ubicentrex"
+                />
+                <p className="muted" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+                  Permet de retrouver l&apos;appel écouté dans Ubicentrex après enregistrement.
+                </p>
+              </div>
               <div className="field" style={{ marginBottom: 0 }}>
                 <label className="label">Date de l'écoute</label>
                 <input type="date" className="input" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
@@ -533,6 +773,7 @@ export function QualitePage() {
               <div className="card" style={{ padding: 12, background: computed.immediateAction ? "rgba(239,68,68,0.08)" : "#f8fafc" }}>
                 <div className="muted" style={{ fontSize: 11 }}>Note finale</div>
                 <div style={{ fontWeight: 800, fontSize: 18 }}>{computed.finalScore}/20</div>
+                <div className="muted" style={{ fontSize: 12 }}>{computed.finalPercent}%</div>
               </div>
               <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
                 <div className="muted" style={{ fontSize: 11 }}>Mention</div>
@@ -551,9 +792,16 @@ export function QualitePage() {
             )}
           </div>
 
-          {domainGroups().map(({ domain, criteria }) => (
+          {domainGroups(referential).map(({ domain, criteria }) => {
+            const ds = domainScore(formScores, criteria);
+            return (
             <div key={domain} className="card">
-              <h3>{domain}</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <h3 style={{ margin: 0 }}>{domain}</h3>
+                <span className="muted" style={{ fontSize: 13 }}>
+                  Sous-total {ds.points}/{ds.max} ({ds.percent}%)
+                </span>
+              </div>
               <div style={{ display: "grid", gap: 16, marginTop: 12 }}>
                 {criteria.map((criterion) => (
                   <div key={criterion.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 16 }}>
@@ -571,11 +819,12 @@ export function QualitePage() {
                       </div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Max {criterion.maxPoints} pts</div>
                     </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                       {scoreOptions(criterion).map((score) => (
                         <button
                           key={score}
                           type="button"
+                          title={rubricLabel(criterion, score)}
                           onClick={() => setFormScores((prev) => ({ ...prev, [criterion.id]: score }))}
                           style={{
                             minWidth: 40,
@@ -593,11 +842,28 @@ export function QualitePage() {
                         </button>
                       ))}
                     </div>
+                    {formScores[criterion.id] !== undefined && rubricLabel(criterion, formScores[criterion.id]) && (
+                      <p className="muted" style={{ fontSize: 12, marginBottom: 8, fontStyle: "italic" }}>
+                        {rubricLabel(criterion, formScores[criterion.id])}
+                      </p>
+                    )}
+                    <div className="field" style={{ marginBottom: 0 }}>
+                      <label className="label" style={{ fontSize: 12 }}>Commentaire / verbatim</label>
+                      <textarea
+                        className="input"
+                        rows={2}
+                        value={formComments[criterion.id] || ""}
+                        onChange={(e) =>
+                          setFormComments((prev) => ({ ...prev, [criterion.id]: e.target.value }))
+                        }
+                        placeholder="Observations spécifiques sur ce critère..."
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-          ))}
+          );})}
 
           {computed.improvementAreas && (
             <div className="card">
@@ -645,6 +911,24 @@ export function QualitePage() {
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {showForm && (
+        <div ref={printRef} style={{ position: "absolute", left: -9999, top: 0 }}>
+          <QualityPrintGrille
+            config={referential}
+            evaluatedAt={formDate}
+            agentName={selectedAgent?.name || selectedAgent?.email || "—"}
+            evaluatorName={user?.name || user?.email || "—"}
+            campaignName={selectedCampaign?.name || ""}
+            channel={formChannel}
+            externalCallId={formExternalCallId.trim() || null}
+            scores={formScores}
+            comments={formComments}
+            computed={computed}
+            evaluationId={selectedId || undefined}
+          />
         </div>
       )}
 

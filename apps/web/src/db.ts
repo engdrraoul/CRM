@@ -4,6 +4,7 @@ import type {
   DailyReport,
   NotificationRow,
   QualityEvaluation,
+  QualityReferentialConfig,
   QualityScores,
   Role,
   Team,
@@ -632,12 +633,14 @@ const QUALITY_SELECT =
    campaign:Campaign(id, name)`;
 
 function mapQualityRow(row: any): QualityEvaluation {
+  const finalScore = Number(row.finalScore) || 0;
   return {
     ...row,
     scores: (row.scores || {}) as QualityScores,
     comments: (row.comments || {}) as Record<string, string>,
     totalPoints: Number(row.totalPoints) || 0,
-    finalScore: Number(row.finalScore) || 0,
+    finalScore,
+    finalPercent: Number(row.finalPercent) || Math.round((finalScore / 20) * 1000) / 10,
     campaign: row.campaign?.id ? row.campaign : null,
   };
 }
@@ -680,10 +683,12 @@ export async function saveQualityEvaluation(payload: {
   agentUserId: string;
   evaluatorUserId: string;
   campaignId?: string | null;
+  externalCallId?: string | null;
   channel: string;
   scores: QualityScores;
   totalPoints: number;
   finalScore: number;
+  finalPercent: number;
   mention: string;
   status: string;
   improvementAreas?: string;
@@ -702,10 +707,12 @@ export async function saveQualityEvaluation(payload: {
     agentUserId: payload.agentUserId,
     evaluatorUserId: payload.evaluatorUserId,
     campaignId: payload.campaignId || null,
+    externalCallId: payload.externalCallId?.trim() || null,
     channel: payload.channel,
     scores: payload.scores,
     totalPoints: payload.totalPoints,
     finalScore: payload.finalScore,
+    finalPercent: payload.finalPercent,
     mention: payload.mention,
     status: payload.status,
     improvementAreas: payload.improvementAreas || null,
@@ -743,4 +750,32 @@ export async function saveQualityEvaluation(payload: {
 export async function deleteQualityEvaluation(id: string) {
   const { error } = await supabase.from("QualityEvaluation").delete().eq("id", id);
   if (error) fail(error, "Impossible de supprimer l'écoute");
+}
+
+export async function getQualityReferential(): Promise<QualityReferentialConfig | null> {
+  return track("getQualityReferential", async () => {
+    const { data, error } = await supabase
+      .from("QualityReferential")
+      .select("config")
+      .eq("id", "default")
+      .maybeSingle();
+    if (error) fail(error, "Impossible de charger le référentiel qualité");
+    return (data?.config as QualityReferentialConfig) || null;
+  });
+}
+
+export async function saveQualityReferential(
+  config: QualityReferentialConfig,
+  updatedBy: string,
+): Promise<QualityReferentialConfig> {
+  return track("saveQualityReferential", async () => {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("QualityReferential")
+      .upsert({ id: "default", config, updatedAt: now, updatedBy }, { onConflict: "id" })
+      .select("config")
+      .single();
+    if (error) fail(error, "Impossible d'enregistrer le référentiel");
+    return data.config as QualityReferentialConfig;
+  });
 }

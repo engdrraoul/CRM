@@ -51,6 +51,23 @@ export interface QualityCriterion {
   blocking: boolean;
   allowThree: boolean;
   expected: string;
+  rubrics?: Record<string, string>;
+}
+
+export interface QualityReferentialThresholds {
+  plafondMinusOne: number;
+  plafondBlocking: number;
+  conformeMin: number;
+  coachingMax: number;
+  mentionExcellent: number;
+  mentionTresSatisfaisant: number;
+  mentionSatisfaisant: number;
+  mentionAmeliorer: number;
+}
+
+export interface QualityReferentialConfig {
+  criteria: QualityCriterion[];
+  thresholds: QualityReferentialThresholds;
 }
 
 export type QualityScores = Record<string, number>;
@@ -73,10 +90,12 @@ export interface QualityComputed {
 export interface QualityEvaluation {
   id: string;
   evaluatedAt: string;
+  externalCallId: string | null;
   channel: string;
   scores: QualityScores;
   totalPoints: number;
   finalScore: number;
+  finalPercent: number;
   mention: string;
   status: string;
   improvementAreas: string | null;

@@ -847,6 +847,7 @@ CREATE TABLE IF NOT EXISTS public."QualityEvaluation" (
   "agentUserId" UUID NOT NULL REFERENCES public."User"(id) ON DELETE CASCADE,
   "evaluatorUserId" UUID NOT NULL REFERENCES public."User"(id) ON DELETE RESTRICT,
   "campaignId" TEXT REFERENCES public."Campaign"(id) ON DELETE SET NULL,
+  "externalCallId" TEXT,
   channel TEXT NOT NULL DEFAULT 'Appel entrant',
   scores JSONB NOT NULL DEFAULT '{}',
   "totalPoints" NUMERIC(5,2) NOT NULL DEFAULT 0,
@@ -895,6 +896,41 @@ CREATE POLICY "Coach and admin can delete quality evaluations"
 CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_evaluatedAt" ON public."QualityEvaluation"("evaluatedAt");
 CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_agentUserId" ON public."QualityEvaluation"("agentUserId");
 CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_campaignId" ON public."QualityEvaluation"("campaignId");
+
+ALTER TABLE public."QualityEvaluation"
+  ADD COLUMN IF NOT EXISTS "finalPercent" NUMERIC(5,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE public."QualityEvaluation"
+  ADD COLUMN IF NOT EXISTS "externalCallId" TEXT;
+
+CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_externalCallId"
+  ON public."QualityEvaluation"("externalCallId")
+  WHERE "externalCallId" IS NOT NULL;
+
+-- ============================================================
+-- 18. Module Qualité — référentiel éditable (feuille 1_Referentiel)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public."QualityReferential" (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  config JSONB NOT NULL,
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updatedBy" UUID REFERENCES public."User"(id) ON DELETE SET NULL
+);
+
+ALTER TABLE public."QualityReferential" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Coach and admin can read quality referential" ON public."QualityReferential";
+CREATE POLICY "Coach and admin can read quality referential"
+  ON public."QualityReferential" FOR SELECT
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+DROP POLICY IF EXISTS "Coach and admin can upsert quality referential" ON public."QualityReferential";
+CREATE POLICY "Coach and admin can upsert quality referential"
+  ON public."QualityReferential" FOR ALL
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'))
+  WITH CHECK (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
 
 -- ============================================================
 -- 16. (Optional) pg_cron scheduling
