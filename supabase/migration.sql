@@ -839,6 +839,64 @@ CREATE INDEX IF NOT EXISTS "idx_Notification_userId" ON public."Notification"("u
 CREATE INDEX IF NOT EXISTS "idx_Notification_createdAt" ON public."Notification"("createdAt");
 
 -- ============================================================
+-- 17. Module Qualité — écoutes & évaluations (Coach Qualité)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public."QualityEvaluation" (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "evaluatedAt" DATE NOT NULL,
+  "agentUserId" UUID NOT NULL REFERENCES public."User"(id) ON DELETE CASCADE,
+  "evaluatorUserId" UUID NOT NULL REFERENCES public."User"(id) ON DELETE RESTRICT,
+  "campaignId" TEXT REFERENCES public."Campaign"(id) ON DELETE SET NULL,
+  channel TEXT NOT NULL DEFAULT 'Appel entrant',
+  scores JSONB NOT NULL DEFAULT '{}',
+  "totalPoints" NUMERIC(5,2) NOT NULL DEFAULT 0,
+  "finalScore" NUMERIC(5,2) NOT NULL DEFAULT 0,
+  mention TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  "improvementAreas" TEXT,
+  "coachingPriority" BOOLEAN NOT NULL DEFAULT false,
+  "immediateAction" BOOLEAN NOT NULL DEFAULT false,
+  conform BOOLEAN NOT NULL DEFAULT false,
+  "positivePoints" TEXT,
+  "actionPlan" TEXT,
+  comments JSONB NOT NULL DEFAULT '{}',
+  "debriefDate" DATE,
+  "debriefConclusion" TEXT,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public."QualityEvaluation" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Coach and admin can read quality evaluations" ON public."QualityEvaluation";
+CREATE POLICY "Coach and admin can read quality evaluations"
+  ON public."QualityEvaluation" FOR SELECT
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+DROP POLICY IF EXISTS "Coach and admin can insert quality evaluations" ON public."QualityEvaluation";
+CREATE POLICY "Coach and admin can insert quality evaluations"
+  ON public."QualityEvaluation" FOR INSERT
+  TO authenticated
+  WITH CHECK (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+DROP POLICY IF EXISTS "Coach and admin can update quality evaluations" ON public."QualityEvaluation";
+CREATE POLICY "Coach and admin can update quality evaluations"
+  ON public."QualityEvaluation" FOR UPDATE
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+DROP POLICY IF EXISTS "Coach and admin can delete quality evaluations" ON public."QualityEvaluation";
+CREATE POLICY "Coach and admin can delete quality evaluations"
+  ON public."QualityEvaluation" FOR DELETE
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_evaluatedAt" ON public."QualityEvaluation"("evaluatedAt");
+CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_agentUserId" ON public."QualityEvaluation"("agentUserId");
+CREATE INDEX IF NOT EXISTS "idx_QualityEvaluation_campaignId" ON public."QualityEvaluation"("campaignId");
+
+-- ============================================================
 -- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --

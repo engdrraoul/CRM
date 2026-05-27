@@ -40,3 +40,57 @@ export interface LoginResponse {
   token: string;
   user: AuthUser;
 }
+
+// ── Qualité (écoutes) ───────────────────────────────────────
+
+export interface QualityCriterion {
+  id: string;
+  domain: string;
+  name: string;
+  maxPoints: number;
+  blocking: boolean;
+  allowThree: boolean;
+  expected: string;
+}
+
+export type QualityScores = Record<string, number>;
+
+export interface QualityComputed {
+  totalPoints: number;
+  finalScore: number;
+  finalPercent: number;
+  mention: string;
+  status: string;
+  improvementAreas: string;
+  coachingPriority: boolean;
+  immediateAction: boolean;
+  conform: boolean;
+  hasMinusOne: boolean;
+  blockingFail: boolean;
+  cap: number;
+}
+
+export interface QualityEvaluation {
+  id: string;
+  evaluatedAt: string;
+  channel: string;
+  scores: QualityScores;
+  totalPoints: number;
+  finalScore: number;
+  mention: string;
+  status: string;
+  improvementAreas: string | null;
+  coachingPriority: boolean;
+  immediateAction: boolean;
+  conform: boolean;
+  positivePoints: string | null;
+  actionPlan: string | null;
+  comments: Record<string, string>;
+  debriefDate: string | null;
+  debriefConclusion: string | null;
+  createdAt: string;
+  updatedAt: string;
+  agent: { id: string; name: string | null; email: string };
+  evaluator: { id: string; name: string | null; email: string };
+  campaign: { id: string; name: string } | null;
+}

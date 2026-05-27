@@ -17,6 +17,7 @@ import {
   Bell,
   Key,
   BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 
 export function AppLayout() {
@@ -39,6 +40,7 @@ export function AppLayout() {
         { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
         { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
         { path: "/reporting-campagnes", label: "Reporting Campagnes", icon: BarChart3, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+        { path: "/qualite", label: "Qualité", icon: ShieldCheck, roles: ["ADMIN", "COACH_QUALITE"] },
       ]
     },
     {

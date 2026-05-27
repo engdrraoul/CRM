@@ -59,6 +59,7 @@ const AllReportsPage = lazyPage("AllReportsPage");
 const ExportPage = lazyPage("ExportPage");
 const ReportingCampagnesPage = lazyPage("ReportingCampagnesPage");
 const ChangePasswordPage = lazyPage("ChangePasswordPage");
+const QualitePage = lazyPage("QualitePage");
 
 function PageFallback() {
   return (
@@ -102,6 +103,7 @@ function ProtectedApp() {
           <Route path="tous-les-rapports" element={<RequireRole roles={["SUPERVISEUR","ADMIN","COACH_QUALITE"]}><AllReportsPage /></RequireRole>} />
           <Route path="export" element={<RequireRole roles={["ADMIN","SUPERVISEUR","COACH_QUALITE"]}><ExportPage /></RequireRole>} />
           <Route path="reporting-campagnes" element={<RequireRole roles={["SUPERVISEUR","ADMIN","COACH_QUALITE"]}><ReportingCampagnesPage /></RequireRole>} />
+          <Route path="qualite" element={<RequireRole roles={["ADMIN","COACH_QUALITE"]}><QualitePage /></RequireRole>} />
           <Route path="changer-mot-de-passe" element={<ChangePasswordPage />} />
         </Route>
       </Routes>

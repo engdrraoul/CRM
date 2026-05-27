@@ -3,6 +3,8 @@ import type {
   Campaign,
   DailyReport,
   NotificationRow,
+  QualityEvaluation,
+  QualityScores,
   Role,
   Team,
   UserRow,
@@ -611,4 +613,134 @@ export async function checkMissingReports(date?: string) {
   });
   if (error) fail(error, "Impossible de vérifier les rapports manquants");
   return data;
+}
+
+// ── Qualité (écoutes) ──────────────────────────────────────
+
+type QualityFilters = {
+  agentUserId?: string;
+  campaignId?: string;
+  evaluatorUserId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+const QUALITY_SELECT =
+  `*,
+   agent:User!agentUserId(id, name, email),
+   evaluator:User!evaluatorUserId(id, name, email),
+   campaign:Campaign(id, name)`;
+
+function mapQualityRow(row: any): QualityEvaluation {
+  return {
+    ...row,
+    scores: (row.scores || {}) as QualityScores,
+    comments: (row.comments || {}) as Record<string, string>,
+    totalPoints: Number(row.totalPoints) || 0,
+    finalScore: Number(row.finalScore) || 0,
+    campaign: row.campaign?.id ? row.campaign : null,
+  };
+}
+
+export async function getQualityEvaluations(filters: QualityFilters = {}): Promise<QualityEvaluation[]> {
+  return track(`getQualityEvaluations(${JSON.stringify(filters)})`, async () => {
+    let query = supabase
+      .from("QualityEvaluation")
+      .select(QUALITY_SELECT)
+      .order("evaluatedAt", { ascending: false })
+      .limit(500);
+
+    if (filters.agentUserId) query = query.eq("agentUserId", filters.agentUserId);
+    if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
+    if (filters.evaluatorUserId) query = query.eq("evaluatorUserId", filters.evaluatorUserId);
+    if (filters.dateFrom) query = query.gte("evaluatedAt", filters.dateFrom);
+    if (filters.dateTo) query = query.lte("evaluatedAt", filters.dateTo);
+
+    const { data, error } = await query;
+    if (error) fail(error, "Impossible de charger les écoutes qualité");
+    return (data || []).map(mapQualityRow);
+  });
+}
+
+export async function getQualityEvaluation(id: string): Promise<QualityEvaluation> {
+  return track(`getQualityEvaluation(${id})`, async () => {
+    const { data, error } = await supabase
+      .from("QualityEvaluation")
+      .select(QUALITY_SELECT)
+      .eq("id", id)
+      .single();
+    if (error) fail(error, "Écoute introuvable");
+    return mapQualityRow(data);
+  });
+}
+
+export async function saveQualityEvaluation(payload: {
+  id?: string;
+  evaluatedAt: string;
+  agentUserId: string;
+  evaluatorUserId: string;
+  campaignId?: string | null;
+  channel: string;
+  scores: QualityScores;
+  totalPoints: number;
+  finalScore: number;
+  mention: string;
+  status: string;
+  improvementAreas?: string;
+  coachingPriority: boolean;
+  immediateAction: boolean;
+  conform: boolean;
+  positivePoints?: string | null;
+  actionPlan?: string | null;
+  comments?: Record<string, string>;
+  debriefDate?: string | null;
+  debriefConclusion?: string | null;
+}): Promise<QualityEvaluation> {
+  const now = new Date().toISOString();
+  const row = {
+    evaluatedAt: payload.evaluatedAt,
+    agentUserId: payload.agentUserId,
+    evaluatorUserId: payload.evaluatorUserId,
+    campaignId: payload.campaignId || null,
+    channel: payload.channel,
+    scores: payload.scores,
+    totalPoints: payload.totalPoints,
+    finalScore: payload.finalScore,
+    mention: payload.mention,
+    status: payload.status,
+    improvementAreas: payload.improvementAreas || null,
+    coachingPriority: payload.coachingPriority,
+    immediateAction: payload.immediateAction,
+    conform: payload.conform,
+    positivePoints: payload.positivePoints || null,
+    actionPlan: payload.actionPlan || null,
+    comments: payload.comments || {},
+    debriefDate: payload.debriefDate || null,
+    debriefConclusion: payload.debriefConclusion || null,
+    updatedAt: now,
+  };
+
+  if (payload.id) {
+    const { data, error } = await supabase
+      .from("QualityEvaluation")
+      .update(row)
+      .eq("id", payload.id)
+      .select(QUALITY_SELECT)
+      .single();
+    if (error) fail(error, "Impossible de mettre à jour l'écoute");
+    return mapQualityRow(data);
+  }
+
+  const { data, error } = await supabase
+    .from("QualityEvaluation")
+    .insert({ ...row, createdAt: now })
+    .select(QUALITY_SELECT)
+    .single();
+  if (error) fail(error, "Impossible d'enregistrer l'écoute");
+  return mapQualityRow(data);
+}
+
+export async function deleteQualityEvaluation(id: string) {
+  const { error } = await supabase.from("QualityEvaluation").delete().eq("id", id);
+  if (error) fail(error, "Impossible de supprimer l'écoute");
 }

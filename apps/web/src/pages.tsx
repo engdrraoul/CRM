@@ -4024,3 +4024,5 @@ export function ReportingCampagnesPage() {
     </div>
   );
 }
+
+export { QualitePage } from "./quality-page";
