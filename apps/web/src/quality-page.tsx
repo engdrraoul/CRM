@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   BarChart3,
+  BookOpen,
   ClipboardList,
   Headphones,
   Plus,
@@ -29,8 +30,9 @@ import {
   emptyQualityScores,
   scoreOptions,
 } from "./lib/quality-scoring";
+import { QUALITY_GUIDE } from "./lib/quality-guide";
 
-type Tab = "dashboard" | "liste" | "nouvelle" | "detail";
+type Tab = "guide" | "dashboard" | "liste" | "nouvelle" | "detail";
 
 function fmtDate(iso: string) {
   if (!iso) return "";
@@ -53,7 +55,7 @@ function statusBadge(status: string) {
 
 export function QualitePage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>("guide");
   const [evaluations, setEvaluations] = useState<QualityEvaluation[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [agents, setAgents] = useState<{ id: string; name: string | null; email: string }[]>([]);
@@ -207,6 +209,7 @@ export function QualitePage() {
   }, [evaluations]);
 
   const tabs: { id: Tab; label: string; icon: typeof BarChart3 }[] = [
+    { id: "guide", label: "Guide (Lisez-moi)", icon: BookOpen },
     { id: "dashboard", label: "Dashboard", icon: BarChart3 },
     { id: "liste", label: "Écoutes", icon: ClipboardList },
     { id: "nouvelle", label: "Nouvelle écoute", icon: Plus },
@@ -234,7 +237,15 @@ export function QualitePage() {
               key={t.id}
               type="button"
               className={`btn ${tab === t.id || (t.id === "liste" && tab === "detail") ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => { if (t.id !== "nouvelle") setSelectedId(null); setTab(t.id === "nouvelle" ? "nouvelle" : t.id); if (t.id === "nouvelle") resetForm(); }}
+              onClick={() => {
+                if (t.id !== "nouvelle") setSelectedId(null);
+                if (t.id === "nouvelle") {
+                  resetForm();
+                  setTab("nouvelle");
+                } else {
+                  setTab(t.id);
+                }
+              }}
             >
               <Icon size={16} />
               {t.label}
@@ -242,6 +253,115 @@ export function QualitePage() {
           );
         })}
       </div>
+
+      {tab === "guide" && (
+        <div style={{ display: "grid", gap: 20, maxWidth: 820 }}>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>{QUALITY_GUIDE.title}</h2>
+            <p className="muted" style={{ lineHeight: 1.6 }}>{QUALITY_GUIDE.intro}</p>
+          </div>
+
+          <div className="card">
+            <h3>Parcours recommandé</h3>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+              Équivalent de la feuille Excel <strong>0_LisezMoi</strong> — chaque étape correspond à une section de l'application.
+            </p>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 16 }}>
+              {QUALITY_GUIDE.parcours.map((p) => (
+                <li key={p.step} style={{ lineHeight: 1.55 }}>
+                  <div style={{ fontWeight: 700 }}>
+                    {p.step}. {p.app}
+                    <span className="muted" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+                      (Excel : {p.excel})
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 4 }}>{p.description}</div>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="card">
+            <h3>Règles automatiques (plafonnements)</h3>
+            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
+              {QUALITY_GUIDE.plafonds.map((rule) => (
+                <li key={rule} style={{ marginBottom: 8 }}>
+                  {rule.split("**").map((part, i) =>
+                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card">
+            <h3>Bonnes pratiques de notation</h3>
+            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
+              {QUALITY_GUIDE.bonnesPratiques.map((tip) => (
+                <li key={tip} style={{ marginBottom: 8 }}>
+                  {tip.split("**").map((part, i) =>
+                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card">
+            <h3>Mentions & statuts</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 12 }}>
+              <div>
+                <h4 style={{ fontSize: 14, marginBottom: 8 }}>Mentions</h4>
+                <table style={{ margin: 0, fontSize: 14 }}>
+                  <tbody>
+                    {QUALITY_GUIDE.mentions.map((m) => (
+                      <tr key={m.label}>
+                        <td style={{ fontWeight: 600, padding: "6px 12px 6px 0" }}>{m.label}</td>
+                        <td className="muted">{m.seuil}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h4 style={{ fontSize: 14, marginBottom: 8 }}>Statuts</h4>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.6 }}>
+                  {QUALITY_GUIDE.statuts.map((s) => (
+                    <li key={s.label} style={{ marginBottom: 10 }}>
+                      <strong>{s.label}</strong>
+                      <div className="muted" style={{ fontSize: 13 }}>{s.regle}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>Personnalisation dans le CRM</h3>
+            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
+              {QUALITY_GUIDE.personnalisation.map((item) => (
+                <li key={item} style={{ marginBottom: 8 }}>
+                  {item.split("**").map((part, i) =>
+                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-primary" onClick={() => { resetForm(); setTab("nouvelle"); }}>
+              <Plus size={18} />
+              Commencer une écoute
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setTab("dashboard")}>
+              <BarChart3 size={18} />
+              Voir le dashboard
+            </button>
+          </div>
+        </div>
+      )}
 
       {(tab === "dashboard" || tab === "liste") && (
         <div className="card" style={{ marginBottom: 20 }}>
