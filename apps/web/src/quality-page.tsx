@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  ArrowLeft,
   BarChart3,
   BookOpen,
   ClipboardList,
@@ -12,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  UserCircle,
 } from "lucide-react";
 import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
 import { useAuth } from "./auth";
@@ -40,19 +42,38 @@ import {
 import { QUALITY_GUIDE } from "./lib/quality-guide";
 import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
 import { fmtDate, fmtPercent, statusBadge } from "./lib/quality-utils";
+import "./quality-page.css";
 
 type Tab = "guide" | "referentiel" | "dashboard" | "liste" | "nouvelle" | "detail";
 
+type PersonLite = { id: string; name: string | null; email: string };
+
+function displayName(p: { name: string | null; email: string }) {
+  return p.name?.trim() || p.email;
+}
+
+function initials(p: { name: string | null; email: string }) {
+  const n = p.name?.trim();
+  if (n) {
+    const parts = n.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return n.slice(0, 2).toUpperCase();
+  }
+  return p.email.slice(0, 2).toUpperCase();
+}
+
 export function QualitePage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("guide");
+  const [tab, setTab] = useState<Tab>("liste");
   const [evaluations, setEvaluations] = useState<QualityEvaluation[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [agents, setAgents] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  const [agents, setAgents] = useState<PersonLite[]>([]);
+  const [evaluators, setEvaluators] = useState<PersonLite[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, run] = useAsync();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<QualityEvaluation | null>(null);
+  const [detailEvaluator, setDetailEvaluator] = useState<PersonLite | null>(null);
 
   const [filterAgent, setFilterAgent] = useState("");
   const [filterCampaign, setFilterCampaign] = useState("");
@@ -78,10 +99,17 @@ export function QualitePage() {
 
   const computed = useMemo(() => computeQualityResult(formScores, referential), [formScores, referential]);
 
+  const coachDisplay = user ? displayName(user) : "—";
+  const evaluatorForDisplay = detailEvaluator ?? (user ? { id: user.id, name: user.name, email: user.email } : null);
+  const evaluatorLabel = evaluatorForDisplay ? displayName(evaluatorForDisplay) : "—";
+
   const loadMeta = () => {
     getCampaignsLite().then(setCampaigns).catch(console.error);
     getUsersLite()
-      .then((rows) => setAgents(rows.filter((u) => u.role === "TELECONSEILLER" || u.role === "SUPERVISEUR")))
+      .then((rows) => {
+        setAgents(rows.filter((u) => u.role === "TELECONSEILLER" || u.role === "SUPERVISEUR"));
+        setEvaluators(rows.filter((u) => u.role === "COACH_QUALITE" || u.role === "ADMIN"));
+      })
       .catch(console.error);
   };
 
@@ -133,12 +161,19 @@ export function QualitePage() {
     setFormDebriefDate("");
     setFormDebriefConclusion("");
     setSelectedId(null);
+    setDetailEvaluator(null);
+  };
+
+  const startNewEvaluation = () => {
+    resetForm();
+    setTab("nouvelle");
   };
 
   const openDetail = async (id: string) => {
     try {
       const ev = await getQualityEvaluation(id);
       setSelectedId(id);
+      setDetailEvaluator({ id: ev.evaluator.id, name: ev.evaluator.name, email: ev.evaluator.email });
       setFormDate(ev.evaluatedAt.slice(0, 10));
       setFormExternalCallId(ev.externalCallId || "");
       setFormAgentId(ev.agent.id);
@@ -214,7 +249,7 @@ export function QualitePage() {
     >();
     for (const ev of evaluations) {
       const id = ev.agent.id;
-      const name = ev.agent.name || ev.agent.email;
+      const name = displayName(ev.agent);
       const cur = map.get(id) || { name, count: 0, sum: 0, sumPct: 0, conform: 0, coaching: 0, immediate: 0 };
       cur.count += 1;
       cur.sum += ev.finalScore;
@@ -255,12 +290,15 @@ export function QualitePage() {
     });
   }, [evaluations, referential]);
 
-  const tabs: { id: Tab; label: string; icon: typeof BarChart3 }[] = [
-    { id: "guide", label: "Guide (Lisez-moi)", icon: BookOpen },
+  const primaryTabs: { id: Tab; label: string; icon: typeof Plus; cta?: boolean }[] = [
+    { id: "nouvelle", label: "Nouvelle écoute", icon: Plus, cta: true },
+    { id: "liste", label: "Historique", icon: ClipboardList },
+    { id: "dashboard", label: "Pilotage", icon: BarChart3 },
+  ];
+
+  const secondaryTabs: { id: Tab; label: string; icon: typeof BookOpen }[] = [
+    { id: "guide", label: "Guide", icon: BookOpen },
     { id: "referentiel", label: "Référentiel", icon: Settings },
-    { id: "dashboard", label: "Dashboard", icon: BarChart3 },
-    { id: "liste", label: "Écoutes", icon: ClipboardList },
-    { id: "nouvelle", label: "Nouvelle écoute", icon: Plus },
   ];
 
   const selectedAgent = agents.find((a) => a.id === formAgentId);
@@ -292,43 +330,130 @@ export function QualitePage() {
   ];
 
   const showForm = tab === "nouvelle" || tab === "detail";
+  const isActiveTab = (id: Tab) => tab === id || (id === "liste" && tab === "detail");
+
+  const filtersBlock = (
+    <div className="card" style={{ marginBottom: 20 }}>
+      <p className="quality-section-title" style={{ marginBottom: 14 }}>Filtres</p>
+      <div className="quality-filters">
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">Conseiller</label>
+          <select className="select" value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)}>
+            <option value="">Tous</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>{displayName(a)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">Campagne</label>
+          <select className="select" value={filterCampaign} onChange={(e) => setFilterCampaign(e.target.value)}>
+            <option value="">Toutes</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">Coach / Évaluateur</label>
+          <select className="select" value={filterEvaluator} onChange={(e) => setFilterEvaluator(e.target.value)}>
+            <option value="">Tous</option>
+            {evaluators.map((e) => (
+              <option key={e.id} value={e.id}>{displayName(e)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">Du</label>
+          <input type="date" className="input" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">Au</label>
+          <input type="date" className="input" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
+        </div>
+        <button type="button" className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
+          <Search size={16} />
+          {loading ? "..." : "Actualiser"}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div>
-      <div className="page-header">
+    <div className="quality-page">
+      <div className="quality-hero">
         <div>
-          <h1>Qualité — Écoutes</h1>
-          <p className="muted">Référentiel premium, scoring automatique et débrief conseiller</p>
+          <h1>Contrôle qualité</h1>
+          <p className="muted">
+            Écoutez dans Ubicentrex, saisissez la grille ici — votre nom est enregistré comme évaluateur.
+          </p>
+          <div className="quality-evaluator-chip">
+            <UserCircle size={18} />
+            <span>
+              {tab === "nouvelle" ? (
+                <>Vous évaluez en tant que <strong>{coachDisplay}</strong></>
+              ) : (
+                <>Connecté : <strong>{coachDisplay}</strong></>
+              )}
+            </span>
+          </div>
         </div>
-        <div style={{ background: "rgba(37, 99, 235, 0.1)", padding: 12, borderRadius: 12 }}>
-          <ShieldCheck color="var(--primary)" />
+        <div className="quality-hero-icon">
+          <ShieldCheck size={32} color="#fff" />
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              className={`btn ${tab === t.id || (t.id === "liste" && tab === "detail") ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => {
-                if (t.id !== "nouvelle") setSelectedId(null);
-                if (t.id === "nouvelle") {
-                  resetForm();
-                  setTab("nouvelle");
-                } else {
-                  setTab(t.id);
-                }
-              }}
-            >
-              <Icon size={16} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      <nav className="quality-nav">
+        <div>
+          <p className="quality-nav-label">Actions</p>
+          <div className="quality-nav-primary">
+            {primaryTabs.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`quality-tab ${t.cta ? "cta" : ""} ${isActiveTab(t.id) ? "active" : ""}`}
+                  onClick={() => {
+                    if (t.id === "nouvelle") startNewEvaluation();
+                    else {
+                      setSelectedId(null);
+                      setDetailEvaluator(null);
+                      setTab(t.id);
+                    }
+                  }}
+                >
+                  <Icon size={16} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <p className="quality-nav-label">Configuration</p>
+          <div className="quality-nav-secondary">
+            {secondaryTabs.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`quality-tab ${tab === t.id ? "active" : ""}`}
+                  onClick={() => {
+                    setSelectedId(null);
+                    setDetailEvaluator(null);
+                    setTab(t.id);
+                  }}
+                >
+                  <Icon size={16} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </nav>
 
       {tab === "guide" && (
         <div style={{ display: "grid", gap: 20, maxWidth: 820 }}>
@@ -336,106 +461,22 @@ export function QualitePage() {
             <h2 style={{ marginTop: 0 }}>{QUALITY_GUIDE.title}</h2>
             <p className="muted" style={{ lineHeight: 1.6 }}>{QUALITY_GUIDE.intro}</p>
           </div>
-
           <div className="card">
             <h3>Parcours recommandé</h3>
-            <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              Équivalent de la feuille Excel <strong>0_LisezMoi</strong> — chaque étape correspond à une section de l'application.
-            </p>
-            <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 16 }}>
+            <ol style={{ margin: "12px 0 0", paddingLeft: 20, display: "grid", gap: 14 }}>
               {QUALITY_GUIDE.parcours.map((p) => (
                 <li key={p.step} style={{ lineHeight: 1.55 }}>
-                  <div style={{ fontWeight: 700 }}>
-                    {p.step}. {p.app}
-                    <span className="muted" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
-                      (Excel : {p.excel})
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 4 }}>{p.description}</div>
+                  <strong>{p.step}. {p.app}</strong>
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>({p.excel})</span>
+                  <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>{p.description}</div>
                 </li>
               ))}
             </ol>
           </div>
-
-          <div className="card">
-            <h3>Règles automatiques (plafonnements)</h3>
-            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
-              {QUALITY_GUIDE.plafonds.map((rule) => (
-                <li key={rule} style={{ marginBottom: 8 }}>
-                  {rule.split("**").map((part, i) =>
-                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="card">
-            <h3>Bonnes pratiques de notation</h3>
-            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
-              {QUALITY_GUIDE.bonnesPratiques.map((tip) => (
-                <li key={tip} style={{ marginBottom: 8 }}>
-                  {tip.split("**").map((part, i) =>
-                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="card">
-            <h3>Mentions & statuts</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 12 }}>
-              <div>
-                <h4 style={{ fontSize: 14, marginBottom: 8 }}>Mentions</h4>
-                <table style={{ margin: 0, fontSize: 14 }}>
-                  <tbody>
-                    {QUALITY_GUIDE.mentions.map((m) => (
-                      <tr key={m.label}>
-                        <td style={{ fontWeight: 600, padding: "6px 12px 6px 0" }}>{m.label}</td>
-                        <td className="muted">{m.seuil}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div>
-                <h4 style={{ fontSize: 14, marginBottom: 8 }}>Statuts</h4>
-                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.6 }}>
-                  {QUALITY_GUIDE.statuts.map((s) => (
-                    <li key={s.label} style={{ marginBottom: 10 }}>
-                      <strong>{s.label}</strong>
-                      <div className="muted" style={{ fontSize: 13 }}>{s.regle}</div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>Personnalisation dans le CRM</h3>
-            <ul style={{ margin: "12px 0 0", paddingLeft: 20, lineHeight: 1.7 }}>
-              {QUALITY_GUIDE.personnalisation.map((item) => (
-                <li key={item} style={{ marginBottom: 8 }}>
-                  {item.split("**").map((part, i) =>
-                    i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button type="button" className="btn btn-primary" onClick={() => { resetForm(); setTab("nouvelle"); }}>
-              <Plus size={18} />
-              Commencer une écoute
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setTab("dashboard")}>
-              <BarChart3 size={18} />
-              Voir le dashboard
-            </button>
-          </div>
+          <button type="button" className="btn btn-primary" onClick={startNewEvaluation}>
+            <Plus size={18} />
+            Commencer une écoute
+          </button>
         </div>
       )}
 
@@ -443,10 +484,7 @@ export function QualitePage() {
         <div style={{ display: "grid", gap: 20 }}>
           <div className="card">
             <h3 style={{ marginTop: 0 }}>Seuils & plafonds</h3>
-            <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              Équivalent feuille Excel <strong>1_Referentiel</strong> — seuils utilisés pour mentions, statuts et plafonnements.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginTop: 16 }}>
               {thresholdFields.map(({ key, label }) => (
                 <div key={key} className="field" style={{ marginBottom: 0 }}>
                   <label className="label">{label}</label>
@@ -468,31 +506,17 @@ export function QualitePage() {
               ))}
             </div>
           </div>
-
           {domainGroups(refDraft).map(({ domain, criteria }) => (
             <div key={domain} className="card">
               <h3>{domain}</h3>
-              <div style={{ display: "grid", gap: 20, marginTop: 12 }}>
+              <div style={{ display: "grid", gap: 16, marginTop: 12 }}>
                 {criteria.map((criterion) => (
-                  <div key={criterion.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 16 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 8 }}>
-                      {criterion.name}
-                      {criterion.blocking && (
-                        <span className="badge" style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "#b91c1c", fontSize: 10 }}>
-                          BLOQUANT
-                        </span>
-                      )}
-                      <span className="muted" style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
-                        Max {criterion.maxPoints} pts
-                      </span>
-                    </div>
-                    <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>{criterion.expected}</p>
+                  <div key={criterion.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 14 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>{criterion.name}</div>
                     <div style={{ display: "grid", gap: 8 }}>
                       {scoreOptions(criterion).map((score) => (
                         <div key={score} className="field" style={{ marginBottom: 0 }}>
-                          <label className="label" style={{ fontSize: 12 }}>
-                            Barème {score}
-                          </label>
+                          <label className="label" style={{ fontSize: 12 }}>Barème {score}</label>
                           <textarea
                             className="input"
                             rows={2}
@@ -516,86 +540,46 @@ export function QualitePage() {
               </div>
             </div>
           ))}
-
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button className="btn btn-primary" disabled={busy} onClick={handleSaveReferential}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={handleSaveReferential}>
               <Save size={18} />
-              {busy ? "Enregistrement..." : "Enregistrer le référentiel"}
+              Enregistrer le référentiel
             </button>
             <button
               type="button"
               className="btn btn-secondary"
               onClick={() => {
-                const def = getDefaultReferential();
-                setRefDraft(def);
+                setRefDraft(getDefaultReferential());
                 toast.message("Référentiel par défaut rechargé (non enregistré)");
               }}
             >
-              Réinitialiser (Excel)
+              Réinitialiser
             </button>
           </div>
         </div>
       )}
 
-      {(tab === "dashboard" || tab === "liste") && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="responsive-filters">
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label className="label">Conseiller</label>
-              <select className="select" value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)}>
-                <option value="">Tous</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name || a.email}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label className="label">Campagne</label>
-              <select className="select" value={filterCampaign} onChange={(e) => setFilterCampaign(e.target.value)}>
-                <option value="">Toutes</option>
-                {campaigns.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label className="label">Du</label>
-              <input type="date" className="input" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label className="label">Au</label>
-              <input type="date" className="input" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
-            </div>
-            <button className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
-              <Search size={16} />
-              Actualiser
-            </button>
-          </div>
-        </div>
-      )}
+      {(tab === "dashboard" || tab === "liste") && filtersBlock}
 
       {tab === "dashboard" && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+          <div className="quality-kpi-grid">
             {[
               { label: "Écoutes", value: kpis.count },
-              { label: "Note moyenne /20", value: kpis.avg },
+              { label: "Moyenne /20", value: kpis.avg },
               { label: "Moyenne %", value: `${kpis.avgPercent}%` },
-              { label: "Taux conformité", value: `${kpis.conformeRate}%` },
-              { label: "Coaching prioritaire", value: kpis.coaching },
-              { label: "Action immédiate", value: kpis.immediate },
+              { label: "Conformité", value: `${kpis.conformeRate}%` },
+              { label: "Coaching", value: kpis.coaching },
+              { label: "Action imm.", value: kpis.immediate },
             ].map((k) => (
-              <div key={k.label} className="card" style={{ padding: "14px 16px" }}>
-                <div className="muted" style={{ fontSize: 12 }}>{k.label}</div>
-                <div style={{ fontWeight: 800, fontSize: 22 }}>{k.value}</div>
+              <div key={k.label} className="quality-kpi">
+                <div className="quality-kpi-label">{k.label}</div>
+                <div className="quality-kpi-value">{k.value}</div>
               </div>
             ))}
           </div>
           <div className="card" style={{ marginBottom: 20 }}>
-            <h3>Statistiques globales par conseiller</h3>
-            <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-              Chaque agent dispose de ses indicateurs agrégés sur la période filtrée (équivalent feuille 4_Dashboard).
-            </p>
+            <h3 style={{ marginTop: 0 }}>Par conseiller</h3>
             {agentStats.length === 0 ? (
               <p className="muted">Aucune écoute sur la période.</p>
             ) : (
@@ -608,8 +592,6 @@ export function QualitePage() {
                       <th style={{ textAlign: "right" }}>Moy. /20</th>
                       <th style={{ textAlign: "right" }}>Moy. %</th>
                       <th style={{ textAlign: "right" }}>Conformité</th>
-                      <th style={{ textAlign: "right" }}>Coaching</th>
-                      <th style={{ textAlign: "right" }}>Action imm.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -620,8 +602,6 @@ export function QualitePage() {
                         <td style={{ textAlign: "right", fontWeight: 600 }}>{a.avgScore}</td>
                         <td style={{ textAlign: "right" }}>{a.avgPercent}%</td>
                         <td style={{ textAlign: "right" }}>{a.conformRate}%</td>
-                        <td style={{ textAlign: "right" }}>{a.coaching}</td>
-                        <td style={{ textAlign: "right" }}>{a.immediate}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -630,13 +610,12 @@ export function QualitePage() {
             )}
           </div>
           <div className="card">
-            <h3>Performance par domaine</h3>
+            <h3 style={{ marginTop: 0 }}>Par domaine</h3>
             <table style={{ marginTop: 12 }}>
               <thead>
                 <tr>
                   <th>Domaine</th>
-                  <th style={{ textAlign: "right" }}>Moyenne pts</th>
-                  <th style={{ textAlign: "right" }}>Max</th>
+                  <th style={{ textAlign: "right" }}>Moyenne</th>
                   <th style={{ textAlign: "right" }}>%</th>
                 </tr>
               </thead>
@@ -644,8 +623,7 @@ export function QualitePage() {
                 {domainStats.map((d) => (
                   <tr key={d.domain}>
                     <td>{d.domain}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{d.avg}</td>
-                    <td style={{ textAlign: "right" }} className="muted">{d.max}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{d.avg}/{d.max}</td>
                     <td style={{ textAlign: "right" }}>{d.percent}%</td>
                   </tr>
                 ))}
@@ -656,260 +634,297 @@ export function QualitePage() {
       )}
 
       {tab === "liste" && (
-        <div className="card" style={{ overflowX: "auto", padding: 0 }}>
+        <div>
           {loading ? (
-            <p style={{ padding: 24, textAlign: "center" }} className="muted">Chargement...</p>
+            <p className="quality-empty">Chargement...</p>
           ) : evaluations.length === 0 ? (
-            <p style={{ padding: 24, textAlign: "center" }} className="muted">Aucune écoute sur la période.</p>
+            <div className="card quality-empty">
+              <p>Aucune écoute sur la période.</p>
+              <button type="button" className="btn btn-primary" style={{ marginTop: 16 }} onClick={startNewEvaluation}>
+                <Plus size={18} />
+                Première écoute
+              </button>
+            </div>
           ) : (
-            <table style={{ margin: 0, minWidth: 900 }}>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>ID appel</th>
-                  <th>Conseiller</th>
-                  <th>Campagne</th>
-                  <th>Canal</th>
-                  <th style={{ textAlign: "right" }}>Note /20</th>
-                  <th style={{ textAlign: "right" }}>%</th>
-                  <th>Mention</th>
-                  <th>Statut</th>
-                  <th>Évaluateur</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {evaluations.map((ev) => (
-                  <tr key={ev.id}>
-                    <td>{fmtDate(ev.evaluatedAt.slice(0, 10))}</td>
-                    <td className="muted" style={{ fontSize: 12, fontFamily: "monospace" }}>
-                      {ev.externalCallId || "—"}
-                    </td>
-                    <td style={{ fontWeight: 600 }}>{ev.agent.name || ev.agent.email}</td>
-                    <td>{ev.campaign?.name || "—"}</td>
-                    <td>{ev.channel}</td>
-                    <td style={{ textAlign: "right", fontWeight: 700 }}>{ev.finalScore}</td>
-                    <td style={{ textAlign: "right" }}>{ev.finalPercent ?? fmtPercent(ev.finalScore)}%</td>
-                    <td>{ev.mention}</td>
-                    <td>{statusBadge(ev.status)}</td>
-                    <td className="muted" style={{ fontSize: 12 }}>{ev.evaluator.name || ev.evaluator.email}</td>
-                    <td>
-                      <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => openDetail(ev.id)}>
-                        Voir
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="quality-list-grid">
+              {evaluations.map((ev) => (
+                <article key={ev.id} className="quality-list-card">
+                  <div className="quality-list-card-header">
+                    <div>
+                      <div className="quality-list-card-agent">{displayName(ev.agent)}</div>
+                      <div className="quality-list-card-date">{fmtDate(ev.evaluatedAt.slice(0, 10))} · {ev.channel}</div>
+                    </div>
+                    {statusBadge(ev.status)}
+                  </div>
+                  {ev.externalCallId && (
+                    <div className="quality-call-id muted">ID Ubicentrex : {ev.externalCallId}</div>
+                  )}
+                  <div className="quality-list-metrics">
+                    <div className="quality-list-metric">
+                      <span className="muted">Note</span>
+                      <strong>{ev.finalScore}/20</strong>
+                    </div>
+                    <div className="quality-list-metric">
+                      <span className="muted">%</span>
+                      <strong>{ev.finalPercent ?? fmtPercent(ev.finalScore)}%</strong>
+                    </div>
+                    <div className="quality-list-metric">
+                      <span className="muted">Mention</span>
+                      <strong style={{ fontSize: 14 }}>{ev.mention}</strong>
+                    </div>
+                  </div>
+                  <div className="quality-list-footer">
+                    <span className="quality-list-evaluator">
+                      <UserCircle size={14} />
+                      Évalué par <strong>{displayName(ev.evaluator)}</strong>
+                    </span>
+                    <button type="button" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => openDetail(ev.id)}>
+                      Ouvrir
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
           )}
         </div>
       )}
 
       {showForm && (
-        <div style={{ display: "grid", gap: 20 }}>
-          <div className="card">
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <Headphones size={20} />
-              {tab === "detail" ? "Grille d'écoute" : "Nouvelle écoute"}
-              {tab === "detail" && (
-                <button type="button" className="btn btn-secondary" style={{ marginLeft: "auto", fontSize: 13 }} onClick={handlePrint}>
-                  <Printer size={16} />
-                  Imprimer la grille
-                </button>
-              )}
-            </h3>
-            <div className="responsive-filters" style={{ marginTop: 16 }}>
-              <div className="field" style={{ marginBottom: 0, gridColumn: "1 / -1" }}>
-                <label className="label">ID appel Ubicentrex</label>
-                <input
-                  type="text"
-                  className="input"
-                  value={formExternalCallId}
-                  onChange={(e) => setFormExternalCallId(e.target.value)}
-                  placeholder="Copiez la référence de l'enregistrement depuis Ubicentrex"
-                />
-                <p className="muted" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
-                  Permet de retrouver l&apos;appel écouté dans Ubicentrex après enregistrement.
-                </p>
-              </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Date de l'écoute</label>
-                <input type="date" className="input" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
-              </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Conseiller *</label>
-                <select className="select" value={formAgentId} onChange={(e) => setFormAgentId(e.target.value)}>
-                  <option value="">— Choisir —</option>
-                  {agents.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name || a.email}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Campagne / Projet</label>
-                <select className="select" value={formCampaignId} onChange={(e) => setFormCampaignId(e.target.value)}>
-                  <option value="">— Optionnel —</option>
-                  {campaigns.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Canal</label>
-                <select className="select" value={formChannel} onChange={(e) => setFormChannel(e.target.value)}>
-                  {QUALITY_CHANNELS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
+        <div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ marginBottom: 16 }}
+            onClick={() => { resetForm(); setTab("liste"); }}
+          >
+            <ArrowLeft size={16} />
+            Retour à l&apos;historique
+          </button>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 20 }}>
-              <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-                <div className="muted" style={{ fontSize: 11 }}>Total brut</div>
-                <div style={{ fontWeight: 800, fontSize: 18 }}>{computed.totalPoints}/20</div>
-              </div>
-              <div className="card" style={{ padding: 12, background: computed.immediateAction ? "rgba(239,68,68,0.08)" : "#f8fafc" }}>
-                <div className="muted" style={{ fontSize: 11 }}>Note finale</div>
-                <div style={{ fontWeight: 800, fontSize: 18 }}>{computed.finalScore}/20</div>
-                <div className="muted" style={{ fontSize: 12 }}>{computed.finalPercent}%</div>
-              </div>
-              <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-                <div className="muted" style={{ fontSize: 11 }}>Mention</div>
-                <div style={{ fontWeight: 700 }}>{computed.mention}</div>
-              </div>
-              <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-                <div className="muted" style={{ fontSize: 11 }}>Statut</div>
-                <div>{statusBadge(computed.status)}</div>
-              </div>
-            </div>
-            {(computed.hasMinusOne || computed.blockingFail) && (
-              <p style={{ marginTop: 12, fontSize: 13, color: "var(--danger)" }}>
-                {computed.hasMinusOne && "Plafond appliqué : critère noté -1 (max 8/20). "}
-                {computed.blockingFail && "Plafond appliqué : critère bloquant &lt; 2 (max 12/20)."}
-              </p>
-            )}
-          </div>
-
-          {domainGroups(referential).map(({ domain, criteria }) => {
-            const ds = domainScore(formScores, criteria);
-            return (
-            <div key={domain} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                <h3 style={{ margin: 0 }}>{domain}</h3>
-                <span className="muted" style={{ fontSize: 13 }}>
-                  Sous-total {ds.points}/{ds.max} ({ds.percent}%)
-                </span>
-              </div>
-              <div style={{ display: "grid", gap: 16, marginTop: 12 }}>
-                {criteria.map((criterion) => (
-                  <div key={criterion.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>
-                          {criterion.name}
-                          {criterion.blocking && (
-                            <span className="badge" style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "#b91c1c", fontSize: 10 }}>
-                              BLOQUANT
-                            </span>
-                          )}
-                        </div>
-                        <p className="muted" style={{ fontSize: 12, marginTop: 4, maxWidth: 720 }}>{criterion.expected}</p>
-                      </div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Max {criterion.maxPoints} pts</div>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                      {scoreOptions(criterion).map((score) => (
-                        <button
-                          key={score}
-                          type="button"
-                          title={rubricLabel(criterion, score)}
-                          onClick={() => setFormScores((prev) => ({ ...prev, [criterion.id]: score }))}
-                          style={{
-                            minWidth: 40,
-                            padding: "8px 12px",
-                            borderRadius: 8,
-                            border: "1px solid",
-                            borderColor: formScores[criterion.id] === score ? "var(--primary)" : "#cbd5e1",
-                            background: formScores[criterion.id] === score ? "rgba(37,99,235,0.1)" : "#fff",
-                            fontWeight: formScores[criterion.id] === score ? 700 : 400,
-                            cursor: "pointer",
-                            color: score === -1 ? "#b91c1c" : undefined,
-                          }}
-                        >
-                          {score}
-                        </button>
-                      ))}
-                    </div>
-                    {formScores[criterion.id] !== undefined && rubricLabel(criterion, formScores[criterion.id]) && (
-                      <p className="muted" style={{ fontSize: 12, marginBottom: 8, fontStyle: "italic" }}>
-                        {rubricLabel(criterion, formScores[criterion.id])}
-                      </p>
-                    )}
-                    <div className="field" style={{ marginBottom: 0 }}>
-                      <label className="label" style={{ fontSize: 12 }}>Commentaire / verbatim</label>
-                      <textarea
-                        className="input"
-                        rows={2}
-                        value={formComments[criterion.id] || ""}
-                        onChange={(e) =>
-                          setFormComments((prev) => ({ ...prev, [criterion.id]: e.target.value }))
-                        }
-                        placeholder="Observations spécifiques sur ce critère..."
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );})}
-
-          {computed.improvementAreas && (
-            <div className="card">
-              <h3>Axes d'amélioration (auto)</h3>
-              <p style={{ fontSize: 14, color: "var(--text-muted)" }}>{computed.improvementAreas}</p>
-            </div>
-          )}
-
-          <div className="card">
-            <h3>Plan d'action & débrief</h3>
-            <div style={{ display: "grid", gap: 16, marginTop: 12 }}>
-              <div className="field">
-                <label className="label">Points forts observés</label>
-                <textarea className="input" rows={3} value={formPositive} onChange={(e) => setFormPositive(e.target.value)} placeholder="Ex : conseiller posé, courtois..." />
-              </div>
-              <div className="field">
-                <label className="label">Plan d'action</label>
-                <textarea className="input" rows={3} value={formActionPlan} onChange={(e) => setFormActionPlan(e.target.value)} placeholder="Écoutes, débriefings, formation..." />
-              </div>
-              <div className="responsive-filters">
+          <div className="quality-form-layout">
+            <aside className="quality-form-sidebar">
+              <div className="quality-meta-card">
+                <h3>
+                  <span className="quality-step-badge">1</span>
+                  Identification
+                </h3>
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label className="label">ID appel Ubicentrex</label>
+                  <input
+                    type="text"
+                    className="input quality-call-id"
+                    value={formExternalCallId}
+                    onChange={(e) => setFormExternalCallId(e.target.value)}
+                    placeholder="Référence enregistrement"
+                  />
+                </div>
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label className="label">Date *</label>
+                  <input type="date" className="input" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
+                </div>
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label className="label">Conseiller *</label>
+                  <select className="select" value={formAgentId} onChange={(e) => setFormAgentId(e.target.value)}>
+                    <option value="">— Choisir —</option>
+                    {agents.map((a) => (
+                      <option key={a.id} value={a.id}>{displayName(a)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label className="label">Campagne</label>
+                  <select className="select" value={formCampaignId} onChange={(e) => setFormCampaignId(e.target.value)}>
+                    <option value="">— Optionnel —</option>
+                    {campaigns.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="field" style={{ marginBottom: 0 }}>
-                  <label className="label">Date du débrief</label>
-                  <input type="date" className="input" value={formDebriefDate} onChange={(e) => setFormDebriefDate(e.target.value)} />
+                  <label className="label">Canal</label>
+                  <select className="select" value={formChannel} onChange={(e) => setFormChannel(e.target.value)}>
+                    {QUALITY_CHANNELS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
-              <div className="field">
-                <label className="label">Conclusion managériale</label>
-                <textarea className="input" rows={3} value={formDebriefConclusion} onChange={(e) => setFormDebriefConclusion(e.target.value)} />
-              </div>
-            </div>
-          </div>
 
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button className="btn btn-primary" disabled={busy || !formAgentId} onClick={handleSave}>
-              <Save size={18} />
-              {busy ? "Enregistrement..." : "Enregistrer l'écoute"}
-            </button>
-            {selectedId && (
-              <button type="button" className="btn btn-danger" onClick={() => {
-                const ev = evaluations.find((e) => e.id === selectedId);
-                if (ev) setToDelete(ev);
-              }}>
-                <Trash2 size={18} />
-                Supprimer
-              </button>
-            )}
+              <div className="quality-meta-card">
+                <h3>
+                  <span className="quality-step-badge">2</span>
+                  Résultat
+                </h3>
+                <div className="quality-score-panel">
+                  <div className="quality-score-box">
+                    <div className="label">Brut</div>
+                    <div className="value">{computed.totalPoints}/20</div>
+                  </div>
+                  <div className={`quality-score-box highlight ${computed.immediateAction ? "alert" : ""}`}>
+                    <div className="label">Final</div>
+                    <div className="value">{computed.finalScore}/20</div>
+                    <div className="sub">{computed.finalPercent}%</div>
+                  </div>
+                  <div className="quality-score-box" style={{ gridColumn: "1 / -1" }}>
+                    <div className="label">Mention</div>
+                    <div className="value" style={{ fontSize: "1rem" }}>{computed.mention}</div>
+                  </div>
+                  <div className="quality-score-box" style={{ gridColumn: "1 / -1" }}>
+                    <div className="label">Statut</div>
+                    <div style={{ marginTop: 6 }}>{statusBadge(computed.status)}</div>
+                  </div>
+                </div>
+                {(computed.hasMinusOne || computed.blockingFail) && (
+                  <div className="quality-alert">
+                    {computed.hasMinusOne && "Plafond -1 (max 8/20). "}
+                    {computed.blockingFail && "Plafond bloquant (max 12/20)."}
+                  </div>
+                )}
+              </div>
+
+              <div className="quality-form-actions">
+                <button type="button" className="btn btn-primary" disabled={busy || !formAgentId} onClick={handleSave}>
+                  <Save size={18} />
+                  {busy ? "..." : "Enregistrer"}
+                </button>
+                {tab === "detail" && (
+                  <button type="button" className="btn btn-secondary" onClick={handlePrint}>
+                    <Printer size={16} />
+                    Imprimer
+                  </button>
+                )}
+                {selectedId && (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      const ev = evaluations.find((e) => e.id === selectedId);
+                      if (ev) setToDelete(ev);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            </aside>
+
+            <main>
+              <div className="card">
+                <div className="quality-evaluator-banner">
+                  {evaluatorForDisplay && (
+                    <div className="avatar">{initials(evaluatorForDisplay)}</div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2 }}>
+                      {tab === "detail" ? "Écoute réalisée par" : "Cette écoute sera enregistrée au nom de"}
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>{evaluatorLabel}</div>
+                    {tab === "nouvelle" && user && (
+                      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                        Votre nom apparaîtra dans l&apos;historique et sur la grille imprimée.
+                      </div>
+                    )}
+                  </div>
+                  {tab === "detail" && (
+                    <button type="button" className="btn btn-secondary" style={{ marginLeft: "auto" }} onClick={handlePrint}>
+                      <Printer size={16} />
+                      Imprimer
+                    </button>
+                  )}
+                </div>
+
+                <p className="quality-section-title">
+                  <span className="quality-step-badge">3</span> Grille de critères
+                </p>
+
+                {domainGroups(referential).map(({ domain, criteria }) => {
+                  const ds = domainScore(formScores, criteria);
+                  return (
+                    <div key={domain} style={{ marginBottom: 28 }}>
+                      <div className="quality-domain-header">
+                        <h3>{domain}</h3>
+                        <span className="quality-domain-pill">{ds.points}/{ds.max} pts · {ds.percent}%</span>
+                      </div>
+                      {criteria.map((criterion) => (
+                        <div key={criterion.id} className="quality-criterion">
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 600 }}>
+                              {criterion.name}
+                              {criterion.blocking && (
+                                <span className="badge" style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "#b91c1c", fontSize: 10 }}>
+                                  BLOQUANT
+                                </span>
+                              )}
+                            </div>
+                            <span className="muted" style={{ fontSize: 12 }}>Max {criterion.maxPoints}</span>
+                          </div>
+                          <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>{criterion.expected}</p>
+                          <div className="quality-score-btns">
+                            {scoreOptions(criterion).map((score) => (
+                              <button
+                                key={score}
+                                type="button"
+                                title={rubricLabel(criterion, score)}
+                                className={`quality-score-btn ${score === -1 ? "minus" : ""} ${formScores[criterion.id] === score ? "selected" : ""}`}
+                                onClick={() => setFormScores((prev) => ({ ...prev, [criterion.id]: score }))}
+                              >
+                                {score}
+                              </button>
+                            ))}
+                          </div>
+                          {rubricLabel(criterion, formScores[criterion.id]) && (
+                            <p className="muted" style={{ fontSize: 12, fontStyle: "italic", marginBottom: 8 }}>
+                              {rubricLabel(criterion, formScores[criterion.id])}
+                            </p>
+                          )}
+                          <div className="field" style={{ marginBottom: 0 }}>
+                            <label className="label" style={{ fontSize: 12 }}>Commentaire</label>
+                            <textarea
+                              className="input"
+                              rows={2}
+                              value={formComments[criterion.id] || ""}
+                              onChange={(e) => setFormComments((prev) => ({ ...prev, [criterion.id]: e.target.value }))}
+                              placeholder="Verbatim ou observation..."
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {computed.improvementAreas && (
+                <div className="card">
+                  <h3 style={{ marginTop: 0 }}>Axes d&apos;amélioration</h3>
+                  <p className="muted" style={{ margin: 0, fontSize: 14 }}>{computed.improvementAreas}</p>
+                </div>
+              )}
+
+              <div className="card">
+                <p className="quality-section-title">
+                  <span className="quality-step-badge">4</span> Débrief
+                </p>
+                <div style={{ display: "grid", gap: 14 }}>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label className="label">Points forts</label>
+                    <textarea className="input" rows={2} value={formPositive} onChange={(e) => setFormPositive(e.target.value)} />
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label className="label">Plan d&apos;action</label>
+                    <textarea className="input" rows={2} value={formActionPlan} onChange={(e) => setFormActionPlan(e.target.value)} />
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label className="label">Date débrief</label>
+                    <input type="date" className="input" value={formDebriefDate} onChange={(e) => setFormDebriefDate(e.target.value)} />
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label className="label">Conclusion</label>
+                    <textarea className="input" rows={2} value={formDebriefConclusion} onChange={(e) => setFormDebriefConclusion(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            </main>
           </div>
         </div>
       )}
@@ -919,8 +934,8 @@ export function QualitePage() {
           <QualityPrintGrille
             config={referential}
             evaluatedAt={formDate}
-            agentName={selectedAgent?.name || selectedAgent?.email || "—"}
-            evaluatorName={user?.name || user?.email || "—"}
+            agentName={selectedAgent ? displayName(selectedAgent) : "—"}
+            evaluatorName={evaluatorLabel}
             campaignName={selectedCampaign?.name || ""}
             channel={formChannel}
             externalCallId={formExternalCallId.trim() || null}
@@ -935,7 +950,7 @@ export function QualitePage() {
       <ConfirmModal
         open={!!toDelete}
         title="Supprimer cette écoute ?"
-        message={toDelete ? `Écoute du ${fmtDate(toDelete.evaluatedAt.slice(0, 10))} — ${toDelete.agent.name || toDelete.agent.email}` : ""}
+        message={toDelete ? `${fmtDate(toDelete.evaluatedAt.slice(0, 10))} — ${displayName(toDelete.agent)}` : ""}
         confirmLabel="Supprimer"
         variant="danger"
         onCancel={() => setToDelete(null)}
