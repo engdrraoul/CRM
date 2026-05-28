@@ -1,6 +1,8 @@
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
+const PDF_CAPTURE_WIDTH = 794;
+
 /** Capture un nœud DOM et télécharge un PDF A4 multi-pages. */
 export async function downloadNodeAsPdf(node: HTMLElement, filename: string): Promise<void> {
   const canvas = await html2canvas(node, {
@@ -8,25 +10,67 @@ export async function downloadNodeAsPdf(node: HTMLElement, filename: string): Pr
     useCORS: true,
     logging: false,
     backgroundColor: "#ffffff",
+    width: PDF_CAPTURE_WIDTH,
+    windowWidth: PDF_CAPTURE_WIDTH,
   });
-  const imgData = canvas.toDataURL("image/png");
-  const pdf = new jsPDF("p", "mm", "a4");
+  addCanvasToPdf(new jsPDF("p", "mm", "a4"), canvas, { newDocument: true }).save(filename);
+}
 
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const imgProps = pdf.getImageProperties(imgData);
-  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+/** Capture chaque section `[data-pdf-section]` séparément pour des pages propres. */
+export async function downloadSectionsAsPdf(container: HTMLElement, filename: string): Promise<void> {
+  const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-pdf-section]"));
+  if (!sections.length) throw new Error("Aucune section PDF à exporter");
 
-  let position = 0;
-  pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
-  let heightLeft = pdfHeight - pageHeight;
+  let pdf: jsPDF | null = null;
 
-  while (heightLeft > 0) {
-    position -= pageHeight;
-    pdf.addPage();
-    pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
-    heightLeft -= pageHeight;
+  for (const section of sections) {
+    const canvas = await html2canvas(section, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: "#ffffff",
+      width: PDF_CAPTURE_WIDTH,
+      windowWidth: PDF_CAPTURE_WIDTH,
+    });
+
+    pdf = addCanvasToPdf(pdf ?? new jsPDF("p", "mm", "a4"), canvas, { newDocument: !pdf });
   }
 
-  pdf.save(filename);
+  (pdf ?? new jsPDF("p", "mm", "a4")).save(filename);
+}
+
+function addCanvasToPdf(
+  pdf: jsPDF,
+  canvas: HTMLCanvasElement,
+  opts: { newDocument: boolean },
+): jsPDF {
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const marginX = 8;
+  const marginY = 8;
+  const contentWidth = pageWidth - marginX * 2;
+  const contentHeight = pageHeight - marginY * 2;
+
+  const imgData = canvas.toDataURL("image/png");
+  const imgHeightMm = (canvas.height * contentWidth) / canvas.width;
+
+  let offsetY = 0;
+  let firstSlice = opts.newDocument;
+
+  while (offsetY < imgHeightMm - 0.5) {
+    if (!firstSlice) pdf.addPage();
+    firstSlice = false;
+
+    pdf.addImage(imgData, "PNG", marginX, marginY - offsetY, contentWidth, imgHeightMm);
+    offsetY += contentHeight;
+  }
+
+  return pdf;
+}
+
+export function buildHistoryPdfFilename(dateFrom: string, dateTo: string): string {
+  const from = dateFrom || "debut";
+  const to = dateTo || "fin";
+  const today = new Date().toISOString().slice(0, 10);
+  return `qualite-historique_${from}_${to}_${today}.pdf`;
 }

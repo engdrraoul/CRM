@@ -132,3 +132,42 @@ export function agentKpisFromEvaluations(evaluations: QualityEvaluation[]) {
     immediate: evaluations.filter((e) => e.immediateAction).length,
   };
 }
+
+export type AgentEvaluationGroup = {
+  agentId: string;
+  agentName: string;
+  count: number;
+  avgScore: number;
+  avgPercent: number;
+  evaluations: QualityEvaluation[];
+};
+
+/** Regroupe les écoutes par conseiller, triées par nom puis date décroissante. */
+export function groupEvaluationsByAgent(
+  evaluations: QualityEvaluation[],
+  agentName: (agent: QualityEvaluation["agent"]) => string,
+): AgentEvaluationGroup[] {
+  const map = new Map<string, AgentEvaluationGroup>();
+  for (const ev of evaluations) {
+    const id = ev.agent.id;
+    let group = map.get(id);
+    if (!group) {
+      group = { agentId: id, agentName: agentName(ev.agent), count: 0, avgScore: 0, avgPercent: 0, evaluations: [] };
+      map.set(id, group);
+    }
+    group.evaluations.push(ev);
+  }
+  return Array.from(map.values())
+    .map((group) => {
+      const sorted = [...group.evaluations].sort(
+        (a, b) => b.evaluatedAt.localeCompare(a.evaluatedAt) || b.id.localeCompare(a.id),
+      );
+      const n = sorted.length;
+      const avgScore = Math.round((sorted.reduce((s, e) => s + e.finalScore, 0) / n) * 10) / 10;
+      const avgPercent = Math.round(
+        (sorted.reduce((s, e) => s + (e.finalPercent ?? fmtPercent(e.finalScore)), 0) / n) * 10,
+      ) / 10;
+      return { ...group, count: n, avgScore, avgPercent, evaluations: sorted };
+    })
+    .sort((a, b) => a.agentName.localeCompare(b.agentName, "fr"));
+}

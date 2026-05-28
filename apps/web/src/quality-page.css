@@ -438,6 +438,17 @@
   margin-bottom: 12px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.quality-history-toolbar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quality-history-export-hint {
+  font-size: 11px;
 }
 
 .quality-view-toggle {
@@ -1447,12 +1458,15 @@
 /* ── Export PDF (grille + synthèse) ─────────────────────── */
 
 .quality-pdf-root {
-  position: absolute;
-  left: -9999px;
+  position: fixed;
+  left: 0;
   top: 0;
-  width: 820px;
-  background: #fff;
+  width: 794px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
   pointer-events: none;
+  z-index: -1;
 }
 
 .quality-print-grille {
@@ -1619,4 +1633,97 @@
   .quality-charts-grid:not(.quality-charts-grid-print) .quality-chart-card:first-child {
     grid-column: 1 / -1;
   }
+}
+
+/* ── Export historique (sections PDF) ───────────────────── */
+
+.quality-history-export-page {
+  width: 794px;
+  box-sizing: border-box;
+  padding: 20px 24px 24px;
+  background: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  color: #0f172a;
+}
+
+.quality-history-export-header h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.quality-history-export-sub {
+  margin: 0 0 4px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.quality-history-export-filters {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.quality-history-export-meta {
+  margin: 0 0 16px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.quality-history-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.quality-history-kpi {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.quality-history-kpi span {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.quality-history-kpi strong {
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.quality-history-section-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quality-history-agent-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.quality-history-table {
+  font-size: 10px;
+}
+
+.quality-history-table th {
+  font-size: 10px;
+  padding: 6px 8px;
+}
+
+.quality-history-table td {
+  padding: 5px 8px;
+}
+
+.quality-history-export-charts {
+  padding-bottom: 12px;
 }
