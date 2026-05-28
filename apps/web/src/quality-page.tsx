@@ -605,8 +605,6 @@ export function QualitePage() {
       agentGroups: periodExportMode === "liste" ? historyAgentGroups : periodExportAgentGroups,
       domainStats: periodExportDomainStats,
       dailyStats: periodExportMode === "liste" ? dailyStats : periodExportDaily,
-      agentChartData: periodExportMode === "liste" ? agentChartData : periodExportAgentChart,
-      domainChartData: periodExportDomainChart,
     };
   }, [
     periodExportMode,
@@ -627,9 +625,6 @@ export function QualitePage() {
     periodExportDomainStats,
     dailyStats,
     periodExportDaily,
-    agentChartData,
-    periodExportAgentChart,
-    periodExportDomainChart,
   ]);
 
   const slugForFilename = (value: string) =>

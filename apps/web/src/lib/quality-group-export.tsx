@@ -1,18 +1,15 @@
 import type { ReactNode } from "react";
 import type { QualityEvaluation } from "@crc/types";
 import type {
-  AgentChartPoint,
   AgentDailyStat,
   AgentEvaluationGroup,
   DailyStat,
-  DomainChartPoint,
 } from "./quality-analytics";
-import { QualityChartsGrid } from "../components/quality/QualityCharts";
+import { QualityDailyTrendChart } from "../components/quality/QualityCharts";
 import {
   PdfExecutiveSummary,
   PdfExportPage,
   PdfKpiGrid,
-  PdfReportFooter,
   PdfReportHeader,
   PdfSectionTitle,
   PdfStatusPill,
@@ -20,8 +17,6 @@ import {
 } from "./quality-pdf-shared";
 import {
   fmtDate,
-  fmtPercent,
-  rdvCriterionPercent,
   rdvCriterionScore,
   CRITERION_EXACTITUDE,
   CRITERION_PROCEDURE,
@@ -67,43 +62,33 @@ type Props = {
   agentGroups: AgentEvaluationGroup[];
   domainStats: DomainStatRow[];
   dailyStats: DailyStat[];
-  agentChartData: AgentChartPoint[];
-  domainChartData: DomainChartPoint[];
   evaluatorDisplay: (evaluator: QualityEvaluation["evaluator"]) => string;
 };
 
-const ROWS_DAILY = 24;
-const ROWS_AGENT = 16;
-
-function chunkRows<T>(rows: T[], size: number): T[][] {
-  if (!rows.length) return [];
-  const chunks: T[][] = [];
-  for (let i = 0; i < rows.length; i += size) chunks.push(rows.slice(i, i + size));
-  return chunks;
-}
-
 function kpiItems(kpis: GroupKpis, keyScorePeriod: Props["keyScorePeriod"]) {
   return [
-    { label: "Écoutes réalisées", value: String(kpis.count), highlight: true },
-    { label: "Score moyen /20", value: String(kpis.avg), highlight: true },
-    { label: "Score moyen %", value: `${kpis.avgPercent}%` },
-    { label: "Taux conformité", value: `${kpis.conformeRate}%`, highlight: kpis.conformeRate >= 80 },
-    { label: "Exactitude RDV", value: keyScorePeriod.exactitude != null ? `${keyScorePeriod.exactitude}%` : "—" },
-    { label: "Respect procédure", value: keyScorePeriod.procedure != null ? `${keyScorePeriod.procedure}%` : "—" },
-    { label: "Coaching prioritaire", value: String(kpis.coaching) },
-    { label: "Action immédiate", value: String(kpis.immediate) },
+    { label: "Écoutes", value: String(kpis.count), highlight: true },
+    { label: "Moy. /20", value: String(kpis.avg), highlight: true },
+    { label: "Moy. %", value: `${kpis.avgPercent}%` },
+    { label: "Conformité", value: `${kpis.conformeRate}%`, highlight: kpis.conformeRate >= 80 },
+    { label: "Exactitude", value: keyScorePeriod.exactitude != null ? `${keyScorePeriod.exactitude}%` : "—" },
+    { label: "Procédure", value: keyScorePeriod.procedure != null ? `${keyScorePeriod.procedure}%` : "—" },
+    { label: "Coaching", value: String(kpis.coaching) },
+    { label: "Action imm.", value: String(kpis.immediate) },
   ];
 }
 
 function GroupTable({
   headers,
   rows,
+  compact,
 }: {
   headers: string[];
   rows: ReactNode[][];
+  compact?: boolean;
 }) {
   return (
-    <table className="pdf-table pdf-table-zebra">
+    <table className={`pdf-table pdf-table-zebra ${compact ? "pdf-table-compact" : ""}`}>
       <thead>
         <tr>
           {headers.map((h) => (
@@ -137,13 +122,9 @@ export function QualityGroupExport({
   agentGroups,
   domainStats,
   dailyStats,
-  agentChartData,
-  domainChartData,
   evaluatorDisplay,
 }: Props) {
   const kind = mode === "history" ? "history" : "group";
-  const dailyChunks = chunkRows(agentDailyStats, ROWS_DAILY);
-  const hasCharts = dailyStats.length > 0 || agentChartData.length > 1 || domainChartData.length > 0;
 
   const executiveText = buildExecutiveSummaryText({
     count: kpis.count,
@@ -158,116 +139,104 @@ export function QualityGroupExport({
     periodLabel,
   });
 
-  let sectionIndex = 1;
+  const flatEvaluations = agentGroups.flatMap((g) =>
+    g.evaluations.map((ev) => ({ ev, agentName: g.agentName })),
+  );
+
+  const showChart = dailyStats.length >= 2 && dailyStats.length <= 45;
 
   return (
-    <div className="pdf-document">
-      <PdfExportPage className="pdf-page-cover">
+    <div className="pdf-document pdf-document-compact">
+      <PdfExportPage>
         <PdfReportHeader
           kind={kind}
           title={title}
-          subtitle="Document de pilotage — transmission hiérarchique"
+          subtitle="Transmission hiérarchique"
           periodLabel={periodLabel}
           filterSummary={filterSummary}
           generatedAt={generatedAt}
+          compact
         />
-        <PdfKpiGrid items={kpiItems(kpis, keyScorePeriod)} />
+        <PdfKpiGrid items={kpiItems(kpis, keyScorePeriod)} compact />
         <PdfExecutiveSummary text={executiveText} />
-        <PdfReportFooter />
-      </PdfExportPage>
 
-      {agentStats.length > 0 && (
-        <PdfExportPage>
-          <PdfSectionTitle index={++sectionIndex}>Synthèse par conseiller</PdfSectionTitle>
-          <GroupTable
-            headers={["Conseiller", "Écoutes", "Moy. /20", "Moy. %", "Conformité"]}
-            rows={agentStats.map((a) => [
-              <strong key="n">{a.name}</strong>,
-              a.count,
-              <strong key="s">{a.avgScore}</strong>,
-              `${a.avgPercent}%`,
-              `${a.conformRate}%`,
-            ])}
-          />
-          <PdfReportFooter />
-        </PdfExportPage>
-      )}
-
-      {domainStats.length > 0 && (
-        <PdfExportPage>
-          <PdfSectionTitle index={++sectionIndex}>Performance par domaine</PdfSectionTitle>
-          <GroupTable
-            headers={["Domaine", "Moyenne", "Max", "Taux %"]}
-            rows={domainStats.map((d) => [d.domain, `${d.avg}`, `${d.max}`, `${d.percent}%`])}
-          />
-          <PdfReportFooter />
-        </PdfExportPage>
-      )}
-
-      {dailyChunks.map((chunk, idx) => (
-        <PdfExportPage key={`daily-${idx}`}>
-          <PdfSectionTitle index={++sectionIndex} hint={dailyChunks.length > 1 ? `Partie ${idx + 1}/${dailyChunks.length}` : undefined}>
-            Suivi par conseiller et par jour
-          </PdfSectionTitle>
-          <GroupTable
-            headers={["Conseiller", "Date", "Écoutes", "Moy. /20", "Moy. %"]}
-            rows={chunk.map((row) => [
-              row.agentName,
-              row.dateLabel,
-              row.count,
-              row.avgScore,
-              `${row.avgPercent}%`,
-            ])}
-          />
-          <PdfReportFooter />
-        </PdfExportPage>
-      ))}
-
-      {hasCharts && (
-        <PdfExportPage className="pdf-page-charts">
-          <PdfSectionTitle index={++sectionIndex}>Analyse graphique</PdfSectionTitle>
-          <QualityChartsGrid
-            dailyData={dailyStats}
-            agentData={agentChartData}
-            domainData={domainChartData}
-            variant="print"
-            fixedWidth={720}
-          />
-          <PdfReportFooter />
-        </PdfExportPage>
-      )}
-
-      {agentGroups.map((group) => {
-        const evalChunks = chunkRows(group.evaluations, ROWS_AGENT);
-        return evalChunks.map((chunk, chunkIdx) => (
-          <PdfExportPage key={`${group.agentId}-${chunkIdx}`}>
-            <PdfSectionTitle
-              index={++sectionIndex}
-              hint={`${group.count} écoute${group.count > 1 ? "s" : ""} · moy. ${group.avgScore}/20 (${group.avgPercent}%)${evalChunks.length > 1 ? ` · ${chunkIdx + 1}/${evalChunks.length}` : ""}`}
-            >
-              Détail — {group.agentName}
-            </PdfSectionTitle>
+        {agentStats.length > 0 && (
+          <>
+            <PdfSectionTitle>Synthèse par conseiller</PdfSectionTitle>
             <GroupTable
-              headers={["Date", "Canal", "Score", "Exact.", "Proc.", "Statut", "Mention", "Coach"]}
-              rows={chunk.map((ev) => {
+              compact
+              headers={["Conseiller", "Écoutes", "Moy./20", "Moy.%", "Conf."]}
+              rows={agentStats.map((a) => [
+                a.name,
+                a.count,
+                a.avgScore,
+                `${a.avgPercent}%`,
+                `${a.conformRate}%`,
+              ])}
+            />
+          </>
+        )}
+
+        {domainStats.length > 0 && (
+          <>
+            <PdfSectionTitle>Performance par domaine</PdfSectionTitle>
+            <GroupTable
+              compact
+              headers={["Domaine", "Moy.", "Max", "%"]}
+              rows={domainStats.map((d) => [d.domain, `${d.avg}`, `${d.max}`, `${d.percent}%`])}
+            />
+          </>
+        )}
+
+        {showChart && (
+          <>
+            <PdfSectionTitle>Évolution des scores</PdfSectionTitle>
+            <div className="pdf-chart-inline">
+              <QualityDailyTrendChart data={dailyStats} variant="print" fixedWidth={720} />
+            </div>
+          </>
+        )}
+
+        {agentDailyStats.length > 0 && (
+          <>
+            <PdfSectionTitle>Suivi par conseiller et par jour</PdfSectionTitle>
+            <GroupTable
+              compact
+              headers={["Conseiller", "Date", "Écoutes", "Moy./20", "Moy.%"]}
+              rows={agentDailyStats.map((row) => [
+                row.agentName,
+                row.dateLabel,
+                row.count,
+                row.avgScore,
+                `${row.avgPercent}%`,
+              ])}
+            />
+          </>
+        )}
+
+        {flatEvaluations.length > 0 && (
+          <>
+            <PdfSectionTitle>Détail des écoutes</PdfSectionTitle>
+            <GroupTable
+              compact
+              headers={["Conseiller", "Date", "Score", "Exact.", "Proc.", "Statut", "Coach"]}
+              rows={flatEvaluations.map(({ ev, agentName }) => {
                 const exactScore = rdvCriterionScore(ev.scores, CRITERION_EXACTITUDE);
                 const procScore = rdvCriterionScore(ev.scores, CRITERION_PROCEDURE);
                 return [
+                  agentName,
                   fmtDate(ev.evaluatedAt.slice(0, 10)),
-                  ev.channel,
-                  <strong key="sc">{ev.finalScore}/20 ({ev.finalPercent ?? fmtPercent(ev.finalScore)}%)</strong>,
-                  exactScore != null ? `${exactScore} (${rdvCriterionPercent(CRITERION_EXACTITUDE, exactScore)}%)` : "—",
-                  procScore != null ? `${procScore} (${rdvCriterionPercent(CRITERION_PROCEDURE, procScore)}%)` : "—",
+                  `${ev.finalScore}/20`,
+                  exactScore ?? "—",
+                  procScore ?? "—",
                   <PdfStatusPill key="st" status={ev.status} />,
-                  ev.mention,
                   evaluatorDisplay(ev.evaluator),
                 ];
               })}
             />
-            <PdfReportFooter />
-          </PdfExportPage>
-        ));
-      })}
+          </>
+        )}
+      </PdfExportPage>
     </div>
   );
 }

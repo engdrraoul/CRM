@@ -3,7 +3,6 @@ import { domainGroups, rubricLabel } from "./quality-scoring";
 import {
   PdfExportPage,
   PdfMetaGrid,
-  PdfReportFooter,
   PdfReportHeader,
   PdfScoreHero,
   PdfSectionTitle,
@@ -98,15 +97,17 @@ export function QualityIndividualExport(props: IndividualExportProps) {
   });
 
   const domainBlocks = domainGroups(config);
+  const hasDebrief = !!(positivePoints || actionPlan || debriefConclusion || debriefDate);
 
   return (
-    <div className="pdf-document">
+    <div className="pdf-document pdf-document-compact">
       <PdfExportPage>
         <PdfReportHeader
           kind="individual"
           title={agentName}
           subtitle={`Écoute du ${dateLabel}`}
           generatedAt={generatedAt}
+          compact
         />
         <PdfScoreHero
           score={computed.finalScore}
@@ -114,8 +115,9 @@ export function QualityIndividualExport(props: IndividualExportProps) {
           mention={computed.mention}
           status={computed.status}
         />
-        <p className="pdf-summary-text">{summary}</p>
+        <p className="pdf-summary-text pdf-summary-text-compact">{summary}</p>
         <PdfMetaGrid
+          compact
           rows={[
             [
               { label: "Conseiller", value: agentName },
@@ -130,31 +132,25 @@ export function QualityIndividualExport(props: IndividualExportProps) {
               { label: "Respect procédure", value: procedureLabel(scores) },
             ],
             [
-              { label: "ID appel Ubicentrex", value: externalCallId || "—" },
+              { label: "ID appel", value: externalCallId || "—" },
               { label: "Total brut", value: `${computed.totalPoints}/20` },
             ],
           ]}
         />
-        <PdfReportFooter docRef={evaluationId} />
-      </PdfExportPage>
 
-      {domainBlocks.map(({ domain, criteria }, domainIdx) => (
-        <PdfExportPage key={domain}>
-          {domainIdx === 0 && (
-            <PdfSectionTitle index={2} hint="Notation critériée sur 20 points">
-              Grille d&apos;évaluation
-            </PdfSectionTitle>
-          )}
-          {domainIdx > 0 && <div className="pdf-domain-spacer" />}
-          <div className="pdf-domain-block">
+        <PdfSectionTitle index={2} hint="Grille critériée">
+          Évaluation détaillée
+        </PdfSectionTitle>
+        {domainBlocks.map(({ domain, criteria }) => (
+          <div key={domain} className="pdf-domain-block pdf-domain-block-compact">
             <div className="pdf-domain-header">{domain}</div>
-            <table className="pdf-table">
+            <table className="pdf-table pdf-table-compact">
               <thead>
                 <tr>
                   <th>Critère</th>
                   <th className="pdf-th-num">Max</th>
                   <th className="pdf-th-num">Note</th>
-                  <th>Commentaire / barème</th>
+                  <th>Commentaire</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,58 +173,36 @@ export function QualityIndividualExport(props: IndividualExportProps) {
               </tbody>
             </table>
           </div>
-          {domainIdx === domainBlocks.length - 1 && (
-            <p className="pdf-grille-total">
-              Note finale retenue : <strong>{computed.finalScore}/20</strong> ({computed.finalPercent}%)
-            </p>
-          )}
-        </PdfExportPage>
-      ))}
+        ))}
+        <p className="pdf-grille-total pdf-grille-total-compact">
+          Note finale : <strong>{computed.finalScore}/20</strong> ({computed.finalPercent}%)
+          {evaluationId && <span className="pdf-ref-inline"> · Réf. {evaluationId.slice(0, 8)}</span>}
+        </p>
 
-      {(positivePoints || actionPlan || debriefConclusion || debriefDate) && (
-        <PdfExportPage>
-          <PdfSectionTitle index={3} hint="Retour coach — partageable avec le conseiller">
-            Débrief conseiller
-          </PdfSectionTitle>
-          <div className="pdf-debrief-block">
-            {debriefDate && (
-              <div className="pdf-debrief-field">
-                <span className="pdf-debrief-label">Date du débrief</span>
-                <p>{fmtDate(debriefDate)}</p>
-              </div>
-            )}
-            {positivePoints && (
-              <div className="pdf-debrief-field">
-                <span className="pdf-debrief-label">Points forts</span>
-                <p>{positivePoints}</p>
-              </div>
-            )}
-            {actionPlan && (
-              <div className="pdf-debrief-field">
-                <span className="pdf-debrief-label">Plan d&apos;action</span>
-                <p>{actionPlan}</p>
-              </div>
-            )}
-            {debriefConclusion && (
-              <div className="pdf-debrief-field">
-                <span className="pdf-debrief-label">Conclusion</span>
-                <p>{debriefConclusion}</p>
-              </div>
-            )}
-          </div>
-          <div className="pdf-signature-block">
-            <div className="pdf-signature-line">
-              <span>Coach qualité</span>
-              <span className="pdf-signature-name">{evaluatorName}</span>
+        {hasDebrief && (
+          <>
+            <PdfSectionTitle index={3}>Débrief conseiller</PdfSectionTitle>
+            <div className="pdf-debrief-block pdf-debrief-block-compact">
+              {debriefDate && (
+                <p><strong>Date :</strong> {fmtDate(debriefDate)}</p>
+              )}
+              {positivePoints && (
+                <p><strong>Points forts :</strong> {positivePoints}</p>
+              )}
+              {actionPlan && (
+                <p><strong>Plan d&apos;action :</strong> {actionPlan}</p>
+              )}
+              {debriefConclusion && (
+                <p><strong>Conclusion :</strong> {debriefConclusion}</p>
+              )}
             </div>
-            <div className="pdf-signature-line">
-              <span>Conseiller</span>
-              <span className="pdf-signature-name">{agentName}</span>
+            <div className="pdf-signature-block pdf-signature-block-compact">
+              <span>Coach : {evaluatorName}</span>
+              <span>Conseiller : {agentName}</span>
             </div>
-          </div>
-          <PdfReportFooter docRef={evaluationId} />
-        </PdfExportPage>
-      )}
+          </>
+        )}
+      </PdfExportPage>
     </div>
   );
 }

@@ -33,6 +33,7 @@ export function PdfReportHeader({
   periodLabel,
   filterSummary,
   generatedAt,
+  compact,
 }: {
   kind: PdfReportKind;
   title: string;
@@ -40,6 +41,7 @@ export function PdfReportHeader({
   periodLabel?: string;
   filterSummary?: string;
   generatedAt: string;
+  compact?: boolean;
 }) {
   const kindLabel =
     kind === "individual"
@@ -49,7 +51,7 @@ export function PdfReportHeader({
         : "Rapport de pilotage qualité";
 
   return (
-    <header className="pdf-header">
+    <header className={`pdf-header ${compact ? "pdf-header-compact" : ""}`}>
       <div className="pdf-header-brand">
         <span className="pdf-header-logo">CRC</span>
         <div>
@@ -132,9 +134,9 @@ export function PdfScoreHero({
 
 type KpiItem = { label: string; value: string; highlight?: boolean };
 
-export function PdfKpiGrid({ items }: { items: KpiItem[] }) {
+export function PdfKpiGrid({ items, compact }: { items: KpiItem[]; compact?: boolean }) {
   return (
-    <div className="pdf-kpi-grid">
+    <div className={`pdf-kpi-grid ${compact ? "pdf-kpi-grid-compact" : ""}`}>
       {items.map((k) => (
         <div key={k.label} className={`pdf-kpi ${k.highlight ? "highlight" : ""}`}>
           <span className="pdf-kpi-label">{k.label}</span>
@@ -154,9 +156,9 @@ export function PdfExecutiveSummary({ text }: { text: string }) {
   );
 }
 
-export function PdfMetaGrid({ rows }: { rows: { label: string; value: string }[][] }) {
+export function PdfMetaGrid({ rows, compact }: { rows: { label: string; value: string }[][]; compact?: boolean }) {
   return (
-    <div className="pdf-meta-grid">
+    <div className={`pdf-meta-grid ${compact ? "pdf-meta-grid-compact" : ""}`}>
       {rows.map((pair, i) => (
         <div key={i} className="pdf-meta-row">
           {pair.map((cell) => (
