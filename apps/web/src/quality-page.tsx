@@ -16,6 +16,10 @@ import {
   ShieldCheck,
   Target,
   UserCircle,
+  LayoutGrid,
+  LayoutList,
+  ChevronDown,
+  ChevronRight,
   RefreshCw,
 } from "lucide-react";
 import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
@@ -106,6 +110,9 @@ export function QualitePage() {
   const [renotePreviousScore, setRenotePreviousScore] = useState<number | null>(null);
   const [actionPlanTouched, setActionPlanTouched] = useState(false);
   const [debriefConclusionTouched, setDebriefConclusionTouched] = useState(false);
+
+  const [historyView, setHistoryView] = useState<"list" | "cards">("list");
+  const [testPanelOpen, setTestPanelOpen] = useState(false);
 
   const [referential, setReferential] = useState<QualityReferentialConfig>(getDefaultReferential());
   const [refDraft, setRefDraft] = useState<QualityReferentialConfig>(getDefaultReferential());
@@ -439,60 +446,52 @@ export function QualitePage() {
   }, [filterFrom, filterTo]);
 
   const periodScoreBlock = evaluations.length > 0 && (tab === "liste" || tab === "dashboard") && (
-    <div className="quality-period-score">
-      <div className="quality-period-score-inner">
-        <div className="quality-period-score-copy">
-          <p className="quality-section-title" style={{ marginBottom: 8, color: "rgba(255,255,255,0.75)" }}>
-            Scores combinés sur la période
-          </p>
-          <h2 style={{ margin: "0 0 8px", fontSize: "1.35rem", color: "#fff" }}>
-            {filteredAgent ? displayName(filteredAgent) : "Tous les conseillers"}
-          </h2>
-          <p style={{ margin: 0, fontSize: 14, color: "rgba(255,255,255,0.85)" }}>
-            {periodLabel} · {kpis.count} écoute{kpis.count > 1 ? "s" : ""}
-            {filterCampaign && (
-              <> · {campaigns.find((c) => c.id === filterCampaign)?.name}</>
-            )}
-          </p>
-        </div>
+    <div className="quality-metrics-strip">
+      <div className="quality-metrics-context">
+        <span className="quality-metrics-title">
+          {filteredAgent ? displayName(filteredAgent) : "Tous les conseillers"}
+        </span>
+        <span className="quality-metrics-sub">
+          {periodLabel} · {kpis.count} écoute{kpis.count > 1 ? "s" : ""}
+          {filterCampaign && <> · {campaigns.find((c) => c.id === filterCampaign)?.name}</>}
+        </span>
       </div>
-      <div className="quality-three-scores quality-three-scores-on-dark">
-        <div className="quality-three-scores-item quality-three-scores-item-primary">
-          <span className="quality-three-scores-label">Score écoute</span>
-          <span className="quality-three-scores-value">{kpis.avg}<small>/20</small></span>
-          <span className="quality-three-scores-sub">{kpis.avgPercent}%</span>
+      <div className="quality-metrics-row">
+        <div className="quality-metric">
+          <span className="quality-metric-label">Score écoute</span>
+          <span className="quality-metric-value">{kpis.avg}<small>/20</small></span>
+          <span className="quality-metric-sub">{kpis.avgPercent}%</span>
         </div>
-        <div className="quality-three-scores-item">
-          <span className="quality-three-scores-label">Exactitude RDV</span>
-          <span className="quality-three-scores-value">
-            {keyScorePeriod.exactitude ? (
-              <>{keyScorePeriod.exactitude.avg}<small>/{CRITERION_RDV_MAX}</small></>
-            ) : (
-              "—"
-            )}
+        <span className="quality-metric-divider" aria-hidden />
+        <div className="quality-metric">
+          <span className="quality-metric-label">Exactitude</span>
+          <span className="quality-metric-value">
+            {keyScorePeriod.exactitude ? <>{keyScorePeriod.exactitude.avg}<small>/{CRITERION_RDV_MAX}</small></> : "—"}
           </span>
           {keyScorePeriod.exactitude && (
-            <span className="quality-three-scores-sub">{keyScorePeriod.exactitude.pct}%</span>
+            <span className="quality-metric-sub">{keyScorePeriod.exactitude.pct}%</span>
           )}
         </div>
-        <div className="quality-three-scores-item">
-          <span className="quality-three-scores-label">Respect procédure</span>
-          <span className="quality-three-scores-value">
-            {keyScorePeriod.procedure ? (
-              <>{keyScorePeriod.procedure.avg}<small>/{CRITERION_RDV_MAX}</small></>
-            ) : (
-              "—"
-            )}
+        <span className="quality-metric-divider" aria-hidden />
+        <div className="quality-metric">
+          <span className="quality-metric-label">Procédure</span>
+          <span className="quality-metric-value">
+            {keyScorePeriod.procedure ? <>{keyScorePeriod.procedure.avg}<small>/{CRITERION_RDV_MAX}</small></> : "—"}
           </span>
           {keyScorePeriod.procedure && (
-            <span className="quality-three-scores-sub">{keyScorePeriod.procedure.pct}%</span>
+            <span className="quality-metric-sub">{keyScorePeriod.procedure.pct}%</span>
           )}
         </div>
-      </div>
-      <div className="quality-period-score-footer">
-        <span>Conformité {kpis.conformeRate}%</span>
-        <span>Coaching {kpis.coaching}</span>
-        <span>Action imm. {kpis.immediate}</span>
+        <span className="quality-metric-divider" aria-hidden />
+        <div className="quality-metric">
+          <span className="quality-metric-label">Conformité</span>
+          <span className="quality-metric-value">{kpis.conformeRate}<small>%</small></span>
+        </div>
+        <span className="quality-metric-divider" aria-hidden />
+        <div className="quality-metric quality-metric-compact">
+          <span className="quality-metric-label">Coaching · Action imm.</span>
+          <span className="quality-metric-value">{kpis.coaching} · {kpis.immediate}</span>
+        </div>
       </div>
     </div>
   );
@@ -563,23 +562,33 @@ export function QualitePage() {
     }).catch((err: any) => toast.error(err?.message || "Purge impossible"));
 
   const testDataPanel = (tab === "dashboard" || tab === "liste") && (
-    <div className="card quality-test-panel">
-      <h3 style={{ marginTop: 0 }}>Données test</h3>
-      <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-        Les écoutes de démo ne sont <strong>pas</strong> créées automatiquement. Cliquez sur charger, puis consultez{" "}
-        <strong>Historique</strong> (badge <code>TEST</code>, ID <code>TEST-…</code>).
-        {testEvaluationCount > 0 && (
-          <> · <strong>{testEvaluationCount}</strong> écoute{testEvaluationCount > 1 ? "s" : ""} test actuellement chargée{testEvaluationCount > 1 ? "s" : ""}.</>
-        )}
-      </p>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button type="button" className="btn btn-primary" disabled={busy || !user?.id} onClick={handleLoadTestData}>
-          Charger 6 écoutes test
-        </button>
-        <button type="button" className="btn btn-danger" disabled={busy} onClick={handlePurgeTestData}>
-          Supprimer les données test
-        </button>
-      </div>
+    <div className="quality-test-line">
+      <button
+        type="button"
+        className="quality-test-line-toggle"
+        onClick={() => setTestPanelOpen((v) => !v)}
+      >
+        {testPanelOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        Données de démo
+        <span className="quality-test-line-count">
+          {testEvaluationCount > 0 ? `${testEvaluationCount} chargée(s)` : "aucune"}
+        </span>
+      </button>
+      {testPanelOpen && (
+        <div className="quality-test-line-body">
+          <p className="muted" style={{ fontSize: 13, margin: "0 0 10px" }}>
+            Chargez 6 écoutes fictives (badge <code>TEST</code>), consultez-les dans Historique, puis supprimez-les.
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !user?.id} onClick={handleLoadTestData}>
+              Charger 6 écoutes test
+            </button>
+            <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={handlePurgeTestData}>
+              Supprimer
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -592,29 +601,13 @@ export function QualitePage() {
   };
 
   const filtersBlock = (
-    <div className="quality-filters-card card">
-      <div className="quality-filters-head">
-        <div>
-          <h3 style={{ margin: 0, fontSize: "1rem" }}>Filtrer les écoutes</h3>
-          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
-            Affinez l&apos;historique et le pilotage par période, conseiller ou coach.
-          </p>
-        </div>
-        {hasActiveFilters && (
-          <button type="button" className="btn btn-secondary" onClick={resetFilters}>
-            <RotateCcw size={16} />
-            Réinitialiser
-          </button>
-        )}
-      </div>
-
-      <div className="quality-filters-body">
-        <div className="quality-filters-row">
-          <div className="field quality-filter-field">
-            <label className="label" htmlFor="q-filter-agent">
-              <UserCircle size={14} />
-              Conseiller
-            </label>
+    <div className="quality-filters-bar">
+      <div className="quality-filters-row">
+        <div className="field quality-filter-field">
+          <label className="label" htmlFor="q-filter-agent">
+            <UserCircle size={14} />
+            Conseiller
+          </label>
             <select
               id="q-filter-agent"
               className="select"
@@ -694,11 +687,15 @@ export function QualitePage() {
           <div className="quality-filters-actions">
             <button type="button" className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
               <Search size={16} />
-              {loading ? "Chargement..." : "Appliquer"}
+              {loading ? "..." : "Appliquer"}
             </button>
+            {hasActiveFilters && (
+              <button type="button" className="btn btn-secondary" onClick={resetFilters} title="Réinitialiser les filtres">
+                <RotateCcw size={16} />
+              </button>
+            )}
           </div>
         </div>
-      </div>
 
       {hasActiveFilters && (
         <div className="quality-filters-active">
@@ -733,78 +730,62 @@ export function QualitePage() {
 
   return (
     <div className="quality-page">
-      <div className="quality-hero">
-        <div>
+      <header className="quality-header-bar">
+        <div className="quality-header-main">
           <h1>Contrôle qualité</h1>
-          <p className="muted">
-            Écoutez dans Ubicentrex, saisissez la grille ici — votre nom est enregistré comme évaluateur.
+          <p className="quality-header-sub">
+            Évaluateur : <strong>{coachDisplay}</strong>
+            <span className="quality-header-sep">·</span>
+            Ubicentrex → saisie grille CRM
           </p>
-          <div className="quality-evaluator-chip">
-            <UserCircle size={18} />
-            <span>
-              {tab === "nouvelle" ? (
-                <>Vous évaluez en tant que <strong>{coachDisplay}</strong></>
-              ) : (
-                <>Connecté : <strong>{coachDisplay}</strong></>
-              )}
-            </span>
-          </div>
         </div>
-        <div className="quality-hero-icon">
-          <ShieldCheck size={32} color="#fff" />
-        </div>
-      </div>
+        <button type="button" className="btn btn-primary" onClick={startNewEvaluation}>
+          <Plus size={18} />
+          Nouvelle écoute
+        </button>
+      </header>
 
-      <nav className="quality-nav">
-        <div>
-          <p className="quality-nav-label">Actions</p>
-          <div className="quality-nav-primary">
-            {primaryTabs.map((t) => {
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={`quality-tab ${t.cta ? "cta" : ""} ${isActiveTab(t.id) ? "active" : ""}`}
-                  onClick={() => {
-                    if (t.id === "nouvelle") startNewEvaluation();
-                    else {
-                      setSelectedId(null);
-                      setDetailEvaluator(null);
-                      setTab(t.id);
-                    }
-                  }}
-                >
-                  <Icon size={16} />
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div>
-          <p className="quality-nav-label">Configuration</p>
-          <div className="quality-nav-secondary">
-            {secondaryTabs.map((t) => {
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={`quality-tab ${tab === t.id ? "active" : ""}`}
-                  onClick={() => {
-                    setSelectedId(null);
-                    setDetailEvaluator(null);
-                    setTab(t.id);
-                  }}
-                >
-                  <Icon size={16} />
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      <nav className="quality-nav-tabs" aria-label="Navigation qualité">
+        {primaryTabs.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              className={`quality-nav-tab ${t.cta ? "cta" : ""} ${isActiveTab(t.id) ? "active" : ""}`}
+              onClick={() => {
+                if (t.id === "nouvelle") startNewEvaluation();
+                else {
+                  setSelectedId(null);
+                  setDetailEvaluator(null);
+                  setTab(t.id);
+                }
+              }}
+            >
+              <Icon size={16} />
+              {t.label}
+            </button>
+          );
+        })}
+        <span className="quality-nav-sep" aria-hidden />
+        {secondaryTabs.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              className={`quality-nav-tab secondary ${tab === t.id ? "active" : ""}`}
+              onClick={() => {
+                setSelectedId(null);
+                setDetailEvaluator(null);
+                setTab(t.id);
+              }}
+            >
+              <Icon size={16} />
+              {t.label}
+            </button>
+          );
+        })}
       </nav>
 
       {tab === "guide" && (
@@ -921,93 +902,185 @@ export function QualitePage() {
 
       {(tab === "dashboard" || tab === "liste") && filtersBlock}
 
-      {testDataPanel}
-
       {periodScoreBlock}
 
       {tab === "dashboard" && (
         <>
-          <div className="quality-kpi-grid">
+          <div className="quality-kpi-strip">
             {[
               { label: "Écoutes", value: kpis.count },
-              { label: "Moyenne /20", value: kpis.avg },
-              { label: "Moyenne %", value: `${kpis.avgPercent}%` },
+              { label: "Moy. /20", value: kpis.avg },
+              { label: "Moy. %", value: `${kpis.avgPercent}%` },
               { label: "Conformité", value: `${kpis.conformeRate}%` },
               { label: "Coaching", value: kpis.coaching },
               { label: "Action imm.", value: kpis.immediate },
             ].map((k) => (
-              <div key={k.label} className="quality-kpi">
-                <div className="quality-kpi-label">{k.label}</div>
-                <div className="quality-kpi-value">{k.value}</div>
+              <div key={k.label} className="quality-kpi-strip-item">
+                <span className="quality-kpi-strip-label">{k.label}</span>
+                <span className="quality-kpi-strip-value">{k.value}</span>
               </div>
             ))}
           </div>
-          <div className="card" style={{ marginBottom: 20 }}>
-            <h3 style={{ marginTop: 0 }}>Par conseiller</h3>
+
+          <section className="quality-section">
+            <h3 className="quality-section-heading">Par conseiller</h3>
             {agentStats.length === 0 ? (
-              <p className="muted">Aucune écoute sur la période.</p>
+              <p className="muted quality-section-empty">Aucune écoute sur la période.</p>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ margin: 0, minWidth: 720 }}>
+              <div className="quality-table-wrap">
+                <table className="quality-data-table">
                   <thead>
                     <tr>
                       <th>Conseiller</th>
-                      <th style={{ textAlign: "right" }}>Écoutes</th>
-                      <th style={{ textAlign: "right" }}>Moy. /20</th>
-                      <th style={{ textAlign: "right" }}>Moy. %</th>
-                      <th style={{ textAlign: "right" }}>Conformité</th>
+                      <th>Écoutes</th>
+                      <th>Moy. /20</th>
+                      <th>Moy. %</th>
+                      <th>Conformité</th>
                     </tr>
                   </thead>
                   <tbody>
                     {agentStats.map((a) => (
                       <tr key={a.id}>
-                        <td style={{ fontWeight: 600 }}>{a.name}</td>
-                        <td style={{ textAlign: "right" }}>{a.count}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>{a.avgScore}</td>
-                        <td style={{ textAlign: "right" }}>{a.avgPercent}%</td>
-                        <td style={{ textAlign: "right" }}>{a.conformRate}%</td>
+                        <td className="quality-td-strong">{a.name}</td>
+                        <td>{a.count}</td>
+                        <td className="quality-td-strong">{a.avgScore}</td>
+                        <td>{a.avgPercent}%</td>
+                        <td>{a.conformRate}%</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Par domaine</h3>
-            <table style={{ marginTop: 12 }}>
-              <thead>
-                <tr>
-                  <th>Domaine</th>
-                  <th style={{ textAlign: "right" }}>Moyenne</th>
-                  <th style={{ textAlign: "right" }}>%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {domainStats.map((d) => (
-                  <tr key={d.domain}>
-                    <td>{d.domain}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{d.avg}/{d.max}</td>
-                    <td style={{ textAlign: "right" }}>{d.percent}%</td>
+          </section>
+
+          <section className="quality-section">
+            <h3 className="quality-section-heading">Par domaine</h3>
+            <div className="quality-table-wrap">
+              <table className="quality-data-table">
+                <thead>
+                  <tr>
+                    <th>Domaine</th>
+                    <th>Moyenne</th>
+                    <th>%</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {domainStats.map((d) => (
+                    <tr key={d.domain}>
+                      <td>{d.domain}</td>
+                      <td className="quality-td-strong">{d.avg}/{d.max}</td>
+                      <td>{d.percent}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {testDataPanel}
         </>
       )}
 
       {tab === "liste" && (
         <div>
+          {!loading && evaluations.length > 0 && (
+            <div className="quality-history-toolbar">
+              <span className="muted" style={{ fontSize: 13 }}>
+                {evaluations.length} écoute{evaluations.length > 1 ? "s" : ""}
+              </span>
+              <div className="quality-view-toggle">
+                <button
+                  type="button"
+                  className={`quality-view-btn ${historyView === "list" ? "active" : ""}`}
+                  onClick={() => setHistoryView("list")}
+                >
+                  <LayoutList size={16} />
+                  Liste
+                </button>
+                <button
+                  type="button"
+                  className={`quality-view-btn ${historyView === "cards" ? "active" : ""}`}
+                  onClick={() => setHistoryView("cards")}
+                >
+                  <LayoutGrid size={16} />
+                  Cartes
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <p className="quality-empty">Chargement...</p>
           ) : evaluations.length === 0 ? (
-            <div className="card quality-empty">
+            <div className="quality-empty-block">
               <p>Aucune écoute sur la période.</p>
-              <button type="button" className="btn btn-primary" style={{ marginTop: 16 }} onClick={startNewEvaluation}>
+              <button type="button" className="btn btn-primary" onClick={startNewEvaluation}>
                 <Plus size={18} />
                 Première écoute
               </button>
+            </div>
+          ) : historyView === "list" ? (
+            <div className="quality-table-wrap">
+              <table className="quality-data-table quality-history-table">
+                <thead>
+                  <tr>
+                    <th>Conseiller</th>
+                    <th>Date</th>
+                    <th>Écoute</th>
+                    <th>Exact.</th>
+                    <th>Proc.</th>
+                    <th>Statut</th>
+                    <th>Coach</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {evaluations.map((ev) => {
+                    const exactScore = rdvCriterionScore(ev.scores, CRITERION_EXACTITUDE);
+                    const procScore = rdvCriterionScore(ev.scores, CRITERION_PROCEDURE);
+                    const isTest = ev.externalCallId?.startsWith(QUALITY_TEST_CALL_PREFIX);
+                    return (
+                      <tr key={ev.id} className={isTest ? "quality-row-test" : undefined}>
+                        <td className="quality-td-strong">
+                          {isTest && <span className="badge quality-test-badge">TEST</span>}
+                          {displayName(ev.agent)}
+                        </td>
+                        <td>
+                          <div>{fmtDate(ev.evaluatedAt.slice(0, 10))}</div>
+                          <div className="quality-td-muted">{ev.channel}</div>
+                        </td>
+                        <td className="quality-td-strong">
+                          {ev.finalScore}/20
+                          <span className="quality-td-muted"> ({ev.finalPercent ?? fmtPercent(ev.finalScore)}%)</span>
+                        </td>
+                        <td>
+                          {exactScore ?? "—"}
+                          {exactScore != null && (
+                            <span className="quality-td-muted"> ({rdvCriterionPercent(CRITERION_EXACTITUDE, exactScore)}%)</span>
+                          )}
+                        </td>
+                        <td>
+                          {procScore ?? "—"}
+                          {procScore != null && (
+                            <span className="quality-td-muted"> ({rdvCriterionPercent(CRITERION_PROCEDURE, procScore)}%)</span>
+                          )}
+                        </td>
+                        <td>{statusBadge(ev.status)}</td>
+                        <td className="quality-td-muted">{displayName(ev.evaluator)}</td>
+                        <td className="quality-td-actions">
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(ev.id)}>
+                            Ouvrir
+                          </button>
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => openRenote(ev.id)}>
+                            <RefreshCw size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="quality-list-grid">
@@ -1028,61 +1101,25 @@ export function QualitePage() {
                       {ev.externalCallId.startsWith(QUALITY_TEST_CALL_PREFIX) && (
                         <span className="badge quality-test-badge">TEST</span>
                       )}
-                      ID Ubicentrex : {ev.externalCallId}
+                      {ev.externalCallId}
                     </div>
                   )}
-                  <div className="quality-three-scores quality-three-scores-card">
-                    <div className="quality-three-scores-item quality-three-scores-item-primary">
-                      <span className="quality-three-scores-label">Score écoute</span>
-                      <span className="quality-three-scores-value">
-                        {ev.finalScore}<small>/20</small>
-                      </span>
-                      <span className="quality-three-scores-sub">
-                        {ev.finalPercent ?? fmtPercent(ev.finalScore)}%
-                      </span>
-                    </div>
-                    <div className="quality-three-scores-item">
-                      <span className="quality-three-scores-label">Exactitude</span>
-                      <span className="quality-three-scores-value">
-                        {exactScore ?? "—"}
-                        {exactScore != null && <small>/{CRITERION_RDV_MAX}</small>}
-                      </span>
-                      {exactScore != null && (
-                        <span className="quality-three-scores-sub">
-                          {rdvCriterionPercent(CRITERION_EXACTITUDE, exactScore)}%
-                        </span>
-                      )}
-                    </div>
-                    <div className="quality-three-scores-item">
-                      <span className="quality-three-scores-label">Procédure</span>
-                      <span className="quality-three-scores-value">
-                        {procScore ?? "—"}
-                        {procScore != null && <small>/{CRITERION_RDV_MAX}</small>}
-                      </span>
-                      {procScore != null && (
-                        <span className="quality-three-scores-sub">
-                          {rdvCriterionPercent(CRITERION_PROCEDURE, procScore)}%
-                        </span>
-                      )}
-                    </div>
+                  <div className="quality-row-scores">
+                    <span><strong>{ev.finalScore}</strong>/20</span>
+                    <span>Exact. {exactScore ?? "—"}{exactScore != null && `/${CRITERION_RDV_MAX}`}</span>
+                    <span>Proc. {procScore ?? "—"}{procScore != null && `/${CRITERION_RDV_MAX}`}</span>
                   </div>
-                  <div className="muted" style={{ fontSize: 13 }}>Mention : {ev.mention}</div>
                   <div className="quality-list-footer">
                     <span className="quality-list-evaluator">
                       <UserCircle size={14} />
-                      Évalué par <strong>{displayName(ev.evaluator)}</strong>
+                      {displayName(ev.evaluator)}
                     </span>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ padding: "6px 12px", fontSize: 13 }}
-                        onClick={() => openRenote(ev.id)}
-                      >
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => openRenote(ev.id)}>
                         <RefreshCw size={14} />
                         Renoter
                       </button>
-                      <button type="button" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => openDetail(ev.id)}>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(ev.id)}>
                         Ouvrir
                       </button>
                     </div>
@@ -1091,6 +1128,8 @@ export function QualitePage() {
               );})}
             </div>
           )}
+
+          {testDataPanel}
         </div>
       )}
 
