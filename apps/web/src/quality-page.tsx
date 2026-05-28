@@ -28,6 +28,7 @@ import {
   getQualityReferential,
   getUsersLite,
   purgeQualityTestData,
+  QUALITY_TEST_CALL_PREFIX,
   saveQualityEvaluation,
   saveQualityReferential,
   seedQualityTestData,
@@ -540,6 +541,48 @@ export function QualitePage() {
 
   const hasActiveFilters = !!(filterAgent || filterCampaign || filterEvaluator || filterFrom || filterTo);
 
+  const testEvaluationCount = useMemo(
+    () => evaluations.filter((e) => e.externalCallId?.startsWith(QUALITY_TEST_CALL_PREFIX)).length,
+    [evaluations],
+  );
+
+  const handleLoadTestData = () =>
+    run(async () => {
+      const n = await seedQualityTestData(user!.id);
+      logQuality("seed_test", { count: n });
+      toast.success(`${n} écoutes test créées — ouvrez l'onglet Historique`);
+      await loadEvaluations();
+    }).catch((err: any) => toast.error(err?.message || "Seed impossible"));
+
+  const handlePurgeTestData = () =>
+    run(async () => {
+      const n = await purgeQualityTestData();
+      logQuality("purge_test", { count: n });
+      toast.success(n ? `${n} écoutes test supprimées` : "Aucune donnée test à supprimer");
+      await loadEvaluations();
+    }).catch((err: any) => toast.error(err?.message || "Purge impossible"));
+
+  const testDataPanel = (tab === "dashboard" || tab === "liste") && (
+    <div className="card quality-test-panel">
+      <h3 style={{ marginTop: 0 }}>Données test</h3>
+      <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+        Les écoutes de démo ne sont <strong>pas</strong> créées automatiquement. Cliquez sur charger, puis consultez{" "}
+        <strong>Historique</strong> (badge <code>TEST</code>, ID <code>TEST-…</code>).
+        {testEvaluationCount > 0 && (
+          <> · <strong>{testEvaluationCount}</strong> écoute{testEvaluationCount > 1 ? "s" : ""} test actuellement chargée{testEvaluationCount > 1 ? "s" : ""}.</>
+        )}
+      </p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button type="button" className="btn btn-primary" disabled={busy || !user?.id} onClick={handleLoadTestData}>
+          Charger 6 écoutes test
+        </button>
+        <button type="button" className="btn btn-danger" disabled={busy} onClick={handlePurgeTestData}>
+          Supprimer les données test
+        </button>
+      </div>
+    </div>
+  );
+
   const resetFilters = () => {
     setFilterAgent("");
     setFilterCampaign("");
@@ -878,6 +921,8 @@ export function QualitePage() {
 
       {(tab === "dashboard" || tab === "liste") && filtersBlock}
 
+      {testDataPanel}
+
       {periodScoreBlock}
 
       {tab === "dashboard" && (
@@ -949,46 +994,6 @@ export function QualitePage() {
               </tbody>
             </table>
           </div>
-          {import.meta.env.DEV && (
-            <div className="card" style={{ borderStyle: "dashed" }}>
-              <h3 style={{ marginTop: 0 }}>Données test (dev)</h3>
-              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                Charge 6 écoutes fictives (préfixe <code>TEST-</code>) pour valider le module. À supprimer avant la prod.
-              </p>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy || !user?.id}
-                  onClick={() =>
-                    run(async () => {
-                      const n = await seedQualityTestData(user!.id);
-                      logQuality("seed_test", { count: n });
-                      toast.success(`${n} écoutes test créées`);
-                      loadEvaluations();
-                    }).catch((err: any) => toast.error(err?.message || "Seed impossible"))
-                  }
-                >
-                  Charger données test
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      const n = await purgeQualityTestData();
-                      logQuality("purge_test", { count: n });
-                      toast.success(`${n} écoutes test supprimées`);
-                      loadEvaluations();
-                    }).catch((err: any) => toast.error(err?.message || "Purge impossible"))
-                  }
-                >
-                  Supprimer données test
-                </button>
-              </div>
-            </div>
-          )}
         </>
       )}
 
@@ -1019,7 +1024,12 @@ export function QualitePage() {
                     {statusBadge(ev.status)}
                   </div>
                   {ev.externalCallId && (
-                    <div className="quality-call-id muted">ID Ubicentrex : {ev.externalCallId}</div>
+                    <div className="quality-call-id muted">
+                      {ev.externalCallId.startsWith(QUALITY_TEST_CALL_PREFIX) && (
+                        <span className="badge quality-test-badge">TEST</span>
+                      )}
+                      ID Ubicentrex : {ev.externalCallId}
+                    </div>
                   )}
                   <div className="quality-three-scores quality-three-scores-card">
                     <div className="quality-three-scores-item quality-three-scores-item-primary">

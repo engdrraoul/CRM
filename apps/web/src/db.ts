@@ -758,14 +758,42 @@ export async function deleteQualityEvaluation(id: string) {
 /** Données test qualité — préfixe externalCallId TEST- (à supprimer après validation UX). */
 export async function seedQualityTestData(evaluatorUserId: string): Promise<number> {
   return track("seedQualityTestData", async () => {
-    const { data: agentRows, error: agentErr } = await supabase
+    const { count: existing, error: countErr } = await supabase
+      .from("QualityEvaluation")
+      .select("id", { count: "exact", head: true })
+      .like("externalCallId", `${QUALITY_TEST_CALL_PREFIX}%`);
+    if (countErr) fail(countErr, "Impossible de vérifier les données test existantes");
+    if (existing && existing > 0) {
+      throw new Error(
+        `${existing} écoute(s) test déjà présente(s). Ouvrez Historique ou cliquez « Supprimer les données test ».`,
+      );
+    }
+
+    let agentRows: { id: string }[] | null = null;
+    const { data: tcRows, error: agentErr } = await supabase
       .from("User")
       .select("id")
       .in("role", ["TELECONSEILLER", "SUPERVISEUR"])
       .eq("active", true)
       .limit(3);
     if (agentErr) fail(agentErr, "Impossible de charger les conseillers");
-    if (!agentRows?.length) throw new Error("Aucun conseiller actif pour les données test");
+    agentRows = tcRows;
+
+    if (!agentRows?.length) {
+      const { data: fallback, error: fbErr } = await supabase
+        .from("User")
+        .select("id")
+        .neq("id", evaluatorUserId)
+        .limit(3);
+      if (fbErr) fail(fbErr, "Impossible de charger des utilisateurs pour les données test");
+      agentRows = fallback;
+    }
+
+    if (!agentRows?.length) {
+      throw new Error(
+        "Aucun conseiller trouvé. Créez au moins un téléconseiller dans Utilisateurs, ou exécutez la migration Qualité dans Supabase.",
+      );
+    }
 
     const base = emptyQualityScores();
     const scenarios: { suffix: string; scores: Partial<QualityScores>; daysAgo: number }[] = [
