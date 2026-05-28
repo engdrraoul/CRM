@@ -1,6 +1,6 @@
 import type { QualityReferentialConfig } from "@crc/types";
 import { domainGroups, rubricLabel } from "./quality-scoring";
-import { fmtDate } from "./quality-utils";
+import { fmtDate, rdvCriterionPercent, rdvCriterionScore, CRITERION_EXACTITUDE, CRITERION_PROCEDURE, CRITERION_RDV_MAX } from "./quality-utils";
 
 type PrintProps = {
   config: QualityReferentialConfig;
@@ -64,12 +64,42 @@ export function QualityPrintGrille({
             <td>{externalCallId || "—"}</td>
           </tr>
           <tr>
-            <th>Note /20</th>
+            <th>Score écoute</th>
             <td>
               <strong>{computed.finalScore}/20</strong> ({computed.finalPercent}%)
             </td>
             <th>Mention</th>
             <td>{computed.mention}</td>
+          </tr>
+          <tr>
+            <th>Exactitude RDV</th>
+            <td>
+              {(() => {
+                const s = rdvCriterionScore(scores, CRITERION_EXACTITUDE);
+                if (s == null) return "—";
+                const pct = rdvCriterionPercent(CRITERION_EXACTITUDE, s);
+                return (
+                  <>
+                    <strong>{s}/{CRITERION_RDV_MAX}</strong>
+                    {pct != null && <> ({pct}%)</>}
+                  </>
+                );
+              })()}
+            </td>
+            <th>Respect procédure</th>
+            <td>
+              {(() => {
+                const s = rdvCriterionScore(scores, CRITERION_PROCEDURE);
+                if (s == null) return "—";
+                const pct = rdvCriterionPercent(CRITERION_PROCEDURE, s);
+                return (
+                  <>
+                    <strong>{s}/{CRITERION_RDV_MAX}</strong>
+                    {pct != null && <> ({pct}%)</>}
+                  </>
+                );
+              })()}
+            </td>
           </tr>
           <tr>
             <th>Statut</th>

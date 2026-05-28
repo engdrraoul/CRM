@@ -45,7 +45,7 @@ import {
 } from "./lib/quality-scoring";
 import { QUALITY_GUIDE } from "./lib/quality-guide";
 import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
-import { fmtDate, fmtPercent, statusBadge } from "./lib/quality-utils";
+import { fmtDate, fmtPercent, avgRdvCriterion, rdvCriterionPercent, rdvCriterionScore, CRITERION_EXACTITUDE, CRITERION_PROCEDURE, CRITERION_RDV_MAX, statusBadge } from "./lib/quality-utils";
 import "./quality-page.css";
 
 type Tab = "guide" | "referentiel" | "dashboard" | "liste" | "nouvelle" | "detail";
@@ -293,6 +293,82 @@ export function QualitePage() {
       return { domain, avg, max, percent: max ? Math.round((avg / max) * 1000) / 10 : 0 };
     });
   }, [evaluations, referential]);
+
+  const keyScorePeriod = useMemo(
+    () => ({
+      exactitude: avgRdvCriterion(evaluations, CRITERION_EXACTITUDE),
+      procedure: avgRdvCriterion(evaluations, CRITERION_PROCEDURE),
+    }),
+    [evaluations],
+  );
+
+  const filteredAgent = filterAgent ? agents.find((a) => a.id === filterAgent) : null;
+
+  const periodLabel = useMemo(() => {
+    if (filterFrom && filterTo) return `du ${fmtDate(filterFrom)} au ${fmtDate(filterTo)}`;
+    if (filterFrom) return `depuis le ${fmtDate(filterFrom)}`;
+    if (filterTo) return `jusqu'au ${fmtDate(filterTo)}`;
+    return "toutes périodes";
+  }, [filterFrom, filterTo]);
+
+  const periodScoreBlock = evaluations.length > 0 && (tab === "liste" || tab === "dashboard") && (
+    <div className="quality-period-score">
+      <div className="quality-period-score-inner">
+        <div className="quality-period-score-copy">
+          <p className="quality-section-title" style={{ marginBottom: 8, color: "rgba(255,255,255,0.75)" }}>
+            Scores combinés sur la période
+          </p>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.35rem", color: "#fff" }}>
+            {filteredAgent ? displayName(filteredAgent) : "Tous les conseillers"}
+          </h2>
+          <p style={{ margin: 0, fontSize: 14, color: "rgba(255,255,255,0.85)" }}>
+            {periodLabel} · {kpis.count} écoute{kpis.count > 1 ? "s" : ""}
+            {filterCampaign && (
+              <> · {campaigns.find((c) => c.id === filterCampaign)?.name}</>
+            )}
+          </p>
+        </div>
+      </div>
+      <div className="quality-three-scores quality-three-scores-on-dark">
+        <div className="quality-three-scores-item quality-three-scores-item-primary">
+          <span className="quality-three-scores-label">Score écoute</span>
+          <span className="quality-three-scores-value">{kpis.avg}<small>/20</small></span>
+          <span className="quality-three-scores-sub">{kpis.avgPercent}%</span>
+        </div>
+        <div className="quality-three-scores-item">
+          <span className="quality-three-scores-label">Exactitude RDV</span>
+          <span className="quality-three-scores-value">
+            {keyScorePeriod.exactitude ? (
+              <>{keyScorePeriod.exactitude.avg}<small>/{CRITERION_RDV_MAX}</small></>
+            ) : (
+              "—"
+            )}
+          </span>
+          {keyScorePeriod.exactitude && (
+            <span className="quality-three-scores-sub">{keyScorePeriod.exactitude.pct}%</span>
+          )}
+        </div>
+        <div className="quality-three-scores-item">
+          <span className="quality-three-scores-label">Respect procédure</span>
+          <span className="quality-three-scores-value">
+            {keyScorePeriod.procedure ? (
+              <>{keyScorePeriod.procedure.avg}<small>/{CRITERION_RDV_MAX}</small></>
+            ) : (
+              "—"
+            )}
+          </span>
+          {keyScorePeriod.procedure && (
+            <span className="quality-three-scores-sub">{keyScorePeriod.procedure.pct}%</span>
+          )}
+        </div>
+      </div>
+      <div className="quality-period-score-footer">
+        <span>Conformité {kpis.conformeRate}%</span>
+        <span>Coaching {kpis.coaching}</span>
+        <span>Action imm. {kpis.immediate}</span>
+      </div>
+    </div>
+  );
 
   const primaryTabs: { id: Tab; label: string; icon: typeof Plus; cta?: boolean }[] = [
     { id: "nouvelle", label: "Nouvelle écoute", icon: Plus, cta: true },
@@ -668,6 +744,8 @@ export function QualitePage() {
 
       {(tab === "dashboard" || tab === "liste") && filtersBlock}
 
+      {periodScoreBlock}
+
       {tab === "dashboard" && (
         <>
           <div className="quality-kpi-grid">
@@ -754,7 +832,10 @@ export function QualitePage() {
             </div>
           ) : (
             <div className="quality-list-grid">
-              {evaluations.map((ev) => (
+              {evaluations.map((ev) => {
+                const exactScore = rdvCriterionScore(ev.scores, CRITERION_EXACTITUDE);
+                const procScore = rdvCriterionScore(ev.scores, CRITERION_PROCEDURE);
+                return (
                 <article key={ev.id} className="quality-list-card">
                   <div className="quality-list-card-header">
                     <div>
@@ -766,20 +847,42 @@ export function QualitePage() {
                   {ev.externalCallId && (
                     <div className="quality-call-id muted">ID Ubicentrex : {ev.externalCallId}</div>
                   )}
-                  <div className="quality-list-metrics">
-                    <div className="quality-list-metric">
-                      <span className="muted">Note</span>
-                      <strong>{ev.finalScore}/20</strong>
+                  <div className="quality-three-scores quality-three-scores-card">
+                    <div className="quality-three-scores-item quality-three-scores-item-primary">
+                      <span className="quality-three-scores-label">Score écoute</span>
+                      <span className="quality-three-scores-value">
+                        {ev.finalScore}<small>/20</small>
+                      </span>
+                      <span className="quality-three-scores-sub">
+                        {ev.finalPercent ?? fmtPercent(ev.finalScore)}%
+                      </span>
                     </div>
-                    <div className="quality-list-metric">
-                      <span className="muted">%</span>
-                      <strong>{ev.finalPercent ?? fmtPercent(ev.finalScore)}%</strong>
+                    <div className="quality-three-scores-item">
+                      <span className="quality-three-scores-label">Exactitude</span>
+                      <span className="quality-three-scores-value">
+                        {exactScore ?? "—"}
+                        {exactScore != null && <small>/{CRITERION_RDV_MAX}</small>}
+                      </span>
+                      {exactScore != null && (
+                        <span className="quality-three-scores-sub">
+                          {rdvCriterionPercent(CRITERION_EXACTITUDE, exactScore)}%
+                        </span>
+                      )}
                     </div>
-                    <div className="quality-list-metric">
-                      <span className="muted">Mention</span>
-                      <strong style={{ fontSize: 14 }}>{ev.mention}</strong>
+                    <div className="quality-three-scores-item">
+                      <span className="quality-three-scores-label">Procédure</span>
+                      <span className="quality-three-scores-value">
+                        {procScore ?? "—"}
+                        {procScore != null && <small>/{CRITERION_RDV_MAX}</small>}
+                      </span>
+                      {procScore != null && (
+                        <span className="quality-three-scores-sub">
+                          {rdvCriterionPercent(CRITERION_PROCEDURE, procScore)}%
+                        </span>
+                      )}
                     </div>
                   </div>
+                  <div className="muted" style={{ fontSize: 13 }}>Mention : {ev.mention}</div>
                   <div className="quality-list-footer">
                     <span className="quality-list-evaluator">
                       <UserCircle size={14} />
@@ -790,7 +893,7 @@ export function QualitePage() {
                     </button>
                   </div>
                 </article>
-              ))}
+              );})}
             </div>
           )}
         </div>
@@ -864,20 +967,39 @@ export function QualitePage() {
                 </h3>
                 <div className="quality-score-panel">
                   <div className="quality-score-box">
-                    <div className="label">Brut</div>
-                    <div className="value">{computed.totalPoints}/20</div>
-                  </div>
-                  <div className={`quality-score-box highlight ${computed.immediateAction ? "alert" : ""}`}>
-                    <div className="label">Final</div>
+                    <div className="label">Score écoute</div>
                     <div className="value">{computed.finalScore}/20</div>
                     <div className="sub">{computed.finalPercent}%</div>
                   </div>
-                  <div className="quality-score-box" style={{ gridColumn: "1 / -1" }}>
-                    <div className="label">Mention</div>
-                    <div className="value" style={{ fontSize: "1rem" }}>{computed.mention}</div>
+                  <div className="quality-score-box">
+                    <div className="label">Exactitude</div>
+                    <div className="value">
+                      {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) ?? "—"}
+                      {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) != null && `/${CRITERION_RDV_MAX}`}
+                    </div>
+                    {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) != null && (
+                      <div className="sub">
+                        {rdvCriterionPercent(CRITERION_EXACTITUDE, rdvCriterionScore(formScores, CRITERION_EXACTITUDE)!)}
+                        %
+                      </div>
+                    )}
+                  </div>
+                  <div className="quality-score-box">
+                    <div className="label">Procédure</div>
+                    <div className="value">
+                      {rdvCriterionScore(formScores, CRITERION_PROCEDURE) ?? "—"}
+                      {rdvCriterionScore(formScores, CRITERION_PROCEDURE) != null && `/${CRITERION_RDV_MAX}`}
+                    </div>
+                    {rdvCriterionScore(formScores, CRITERION_PROCEDURE) != null && (
+                      <div className="sub">
+                        {rdvCriterionPercent(CRITERION_PROCEDURE, rdvCriterionScore(formScores, CRITERION_PROCEDURE)!)}
+                        %
+                      </div>
+                    )}
                   </div>
                   <div className="quality-score-box" style={{ gridColumn: "1 / -1" }}>
-                    <div className="label">Statut</div>
+                    <div className="label">Mention · Statut</div>
+                    <div className="value" style={{ fontSize: "0.95rem" }}>{computed.mention}</div>
                     <div style={{ marginTop: 6 }}>{statusBadge(computed.status)}</div>
                   </div>
                 </div>
