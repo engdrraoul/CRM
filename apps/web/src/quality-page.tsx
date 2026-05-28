@@ -7,7 +7,6 @@ import {
   ClipboardList,
   Headphones,
   Plus,
-  Printer,
   Save,
   Calendar,
   Filter,
@@ -16,8 +15,8 @@ import {
   Settings,
   ShieldCheck,
   Target,
-  Trash2,
   UserCircle,
+  RefreshCw,
 } from "lucide-react";
 import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
 import { useAuth } from "./auth";
@@ -28,8 +27,10 @@ import {
   getQualityEvaluations,
   getQualityReferential,
   getUsersLite,
+  purgeQualityTestData,
   saveQualityEvaluation,
   saveQualityReferential,
+  seedQualityTestData,
 } from "./db";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { useAsync } from "./hooks/useAsync";
@@ -37,14 +38,15 @@ import {
   QUALITY_CHANNELS,
   computeQualityResult,
   domainGroups,
-  domainScore,
   emptyQualityScores,
   getDefaultReferential,
-  rubricLabel,
   scoreOptions,
 } from "./lib/quality-scoring";
 import { QUALITY_GUIDE } from "./lib/quality-guide";
 import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
+import { buildActionPlanSuggestion, buildDebriefConclusion } from "./lib/quality-debrief";
+import { logQuality, logQualityError } from "./lib/quality-log";
+import { QualityFormWizard, type FormMode, type FormStep } from "./components/quality/QualityFormWizard";
 import { fmtDate, fmtPercent, avgRdvCriterion, rdvCriterionPercent, rdvCriterionScore, CRITERION_EXACTITUDE, CRITERION_PROCEDURE, CRITERION_RDV_MAX, statusBadge } from "./lib/quality-utils";
 import "./quality-page.css";
 
@@ -96,6 +98,13 @@ export function QualitePage() {
   const [formActionPlan, setFormActionPlan] = useState("");
   const [formDebriefDate, setFormDebriefDate] = useState("");
   const [formDebriefConclusion, setFormDebriefConclusion] = useState("");
+
+  const [formMode, setFormMode] = useState<FormMode>("create");
+  const [formStep, setFormStep] = useState<FormStep>(1);
+  const [originalEvaluatorId, setOriginalEvaluatorId] = useState<string | null>(null);
+  const [renotePreviousScore, setRenotePreviousScore] = useState<number | null>(null);
+  const [actionPlanTouched, setActionPlanTouched] = useState(false);
+  const [debriefConclusionTouched, setDebriefConclusionTouched] = useState(false);
 
   const [referential, setReferential] = useState<QualityReferentialConfig>(getDefaultReferential());
   const [refDraft, setRefDraft] = useState<QualityReferentialConfig>(getDefaultReferential());
@@ -166,68 +175,185 @@ export function QualitePage() {
     setFormDebriefConclusion("");
     setSelectedId(null);
     setDetailEvaluator(null);
+    setFormMode("create");
+    setFormStep(1);
+    setOriginalEvaluatorId(null);
+    setRenotePreviousScore(null);
+    setActionPlanTouched(false);
+    setDebriefConclusionTouched(false);
+  };
+
+  const populateFormFromEvaluation = (ev: QualityEvaluation, mode: FormMode, step: FormStep) => {
+    setSelectedId(ev.id);
+    setOriginalEvaluatorId(ev.evaluator.id);
+    setDetailEvaluator({ id: ev.evaluator.id, name: ev.evaluator.name, email: ev.evaluator.email });
+    setFormDate(ev.evaluatedAt.slice(0, 10));
+    setFormExternalCallId(ev.externalCallId || "");
+    setFormAgentId(ev.agent.id);
+    setFormCampaignId(ev.campaign?.id || "");
+    setFormChannel(ev.channel);
+    setFormScores({ ...emptyQualityScores(referential), ...ev.scores });
+    setFormComments(ev.comments || {});
+    setFormPositive(ev.positivePoints || "");
+    setFormActionPlan(ev.actionPlan || "");
+    setFormDebriefDate(ev.debriefDate?.slice(0, 10) || "");
+    setFormDebriefConclusion(ev.debriefConclusion || "");
+    setActionPlanTouched(!!ev.actionPlan?.trim());
+    setDebriefConclusionTouched(!!ev.debriefConclusion?.trim());
+    setFormMode(mode);
+    setFormStep(step);
+    setRenotePreviousScore(mode === "renote" ? ev.finalScore : null);
+    if (mode === "renote" && !ev.debriefDate) {
+      setFormDebriefDate(new Date().toISOString().slice(0, 10));
+    }
+    logQuality("form_open", { mode, evaluationId: ev.id, agentId: ev.agent.id, step });
   };
 
   const startNewEvaluation = () => {
     resetForm();
     setTab("nouvelle");
+    logQuality("form_open", { mode: "create", step: 1 });
   };
 
   const openDetail = async (id: string) => {
     try {
       const ev = await getQualityEvaluation(id);
-      setSelectedId(id);
-      setDetailEvaluator({ id: ev.evaluator.id, name: ev.evaluator.name, email: ev.evaluator.email });
-      setFormDate(ev.evaluatedAt.slice(0, 10));
-      setFormExternalCallId(ev.externalCallId || "");
-      setFormAgentId(ev.agent.id);
-      setFormCampaignId(ev.campaign?.id || "");
-      setFormChannel(ev.channel);
-      setFormScores({ ...emptyQualityScores(referential), ...ev.scores });
-      setFormComments(ev.comments || {});
-      setFormPositive(ev.positivePoints || "");
-      setFormActionPlan(ev.actionPlan || "");
-      setFormDebriefDate(ev.debriefDate?.slice(0, 10) || "");
-      setFormDebriefConclusion(ev.debriefConclusion || "");
+      populateFormFromEvaluation(ev, "edit", 1);
       setTab("detail");
     } catch (err: any) {
       toast.error(err?.message || "Écoute introuvable");
     }
   };
 
+  const openRenote = async (id: string) => {
+    try {
+      const ev = await getQualityEvaluation(id);
+      populateFormFromEvaluation(ev, "renote", 2);
+      setTab("detail");
+    } catch (err: any) {
+      toast.error(err?.message || "Écoute introuvable");
+    }
+  };
+
+  const applyDebriefAuto = (force: boolean) => {
+    const agent = agents.find((a) => a.id === formAgentId);
+    const agentName = agent ? displayName(agent) : "le conseiller";
+    const result = computeQualityResult(formScores, referential);
+    const debriefDate = formDebriefDate || new Date().toISOString().slice(0, 10);
+    if (!formDebriefDate) setFormDebriefDate(debriefDate);
+
+    let nextPlan = formActionPlan;
+    if (force || !actionPlanTouched) {
+      nextPlan = buildActionPlanSuggestion(result);
+      setFormActionPlan(nextPlan);
+      logQuality("debrief_auto_fill", { field: "actionPlan", manual: force, length: nextPlan.length });
+    }
+
+    if (force || !debriefConclusionTouched) {
+      const conclusion = buildDebriefConclusion({
+        agentName,
+        computed: result,
+        actionPlan: nextPlan,
+        positivePoints: formPositive,
+        debriefDate,
+      });
+      setFormDebriefConclusion(conclusion);
+      logQuality("debrief_auto_fill", { field: "conclusion", manual: force, length: conclusion.length });
+    }
+  };
+
+  const regenerateActionPlan = () => {
+    const result = computeQualityResult(formScores, referential);
+    const plan = buildActionPlanSuggestion(result);
+    setFormActionPlan(plan);
+    setActionPlanTouched(false);
+    logQuality("debrief_auto_fill", { field: "actionPlan", manual: true, length: plan.length });
+  };
+
+  const regenerateConclusion = () => {
+    const agent = agents.find((a) => a.id === formAgentId);
+    const agentName = agent ? displayName(agent) : "le conseiller";
+    const result = computeQualityResult(formScores, referential);
+    const debriefDate = formDebriefDate || new Date().toISOString().slice(0, 10);
+    const conclusion = buildDebriefConclusion({
+      agentName,
+      computed: result,
+      actionPlan: formActionPlan,
+      positivePoints: formPositive,
+      debriefDate,
+    });
+    setFormDebriefConclusion(conclusion);
+    setDebriefConclusionTouched(false);
+    logQuality("debrief_auto_fill", { field: "conclusion", manual: true, length: conclusion.length });
+  };
+
+  const goToStep = (next: FormStep) => {
+    logQuality("step_change", { from: formStep, to: next });
+    setFormStep(next);
+    if (next === 3) applyDebriefAuto(false);
+  };
+
+  const handleScoreChange = (criterionId: string, score: number) => {
+    setFormScores((prev) => {
+      const old = prev[criterionId];
+      if (old !== score) logQuality("score_change", { criterionId, from: old, to: score });
+      return { ...prev, [criterionId]: score };
+    });
+  };
+
   const handleSave = () =>
     run(async () => {
+      const t0 = performance.now();
       if (!user?.id) throw new Error("Non authentifié");
       if (!formAgentId) throw new Error("Sélectionnez un conseiller");
       const result = computeQualityResult(formScores, referential);
-      await saveQualityEvaluation({
-        id: selectedId || undefined,
-        evaluatedAt: formDate,
-        agentUserId: formAgentId,
-        evaluatorUserId: user.id,
-        campaignId: formCampaignId || null,
-        externalCallId: formExternalCallId.trim() || null,
-        channel: formChannel,
-        scores: formScores,
-        totalPoints: result.totalPoints,
-        finalScore: result.finalScore,
-        finalPercent: result.finalPercent,
-        mention: result.mention,
-        status: result.status,
-        improvementAreas: result.improvementAreas,
-        coachingPriority: result.coachingPriority,
-        immediateAction: result.immediateAction,
-        conform: result.conform,
-        positivePoints: formPositive || null,
-        actionPlan: formActionPlan || null,
-        comments: formComments,
-        debriefDate: formDebriefDate || null,
-        debriefConclusion: formDebriefConclusion || null,
-      });
-      toast.success(selectedId ? "Écoute mise à jour" : "Écoute enregistrée");
-      resetForm();
-      setTab("liste");
-      loadEvaluations();
+      const evaluatorId = selectedId && originalEvaluatorId ? originalEvaluatorId : user.id;
+      const saveEvent = !selectedId ? "save_create" : formMode === "renote" ? "save_renote" : "save_update";
+      try {
+        await saveQualityEvaluation({
+          id: selectedId || undefined,
+          evaluatedAt: formDate,
+          agentUserId: formAgentId,
+          evaluatorUserId: evaluatorId,
+          campaignId: formCampaignId || null,
+          externalCallId: formExternalCallId.trim() || null,
+          channel: formChannel,
+          scores: formScores,
+          totalPoints: result.totalPoints,
+          finalScore: result.finalScore,
+          finalPercent: result.finalPercent,
+          mention: result.mention,
+          status: result.status,
+          improvementAreas: result.improvementAreas,
+          coachingPriority: result.coachingPriority,
+          immediateAction: result.immediateAction,
+          conform: result.conform,
+          positivePoints: formPositive || null,
+          actionPlan: formActionPlan || null,
+          comments: formComments,
+          debriefDate: formDebriefDate || null,
+          debriefConclusion: formDebriefConclusion || null,
+        });
+        logQuality(saveEvent, {
+          evaluationId: selectedId,
+          finalScore: result.finalScore,
+          status: result.status,
+          durationMs: Math.round(performance.now() - t0),
+        });
+        toast.success(
+          formMode === "renote"
+            ? "Re-notation enregistrée"
+            : selectedId
+              ? "Écoute mise à jour"
+              : "Écoute enregistrée",
+        );
+        resetForm();
+        setTab("liste");
+        loadEvaluations();
+      } catch (err) {
+        logQualityError("save_error", err, { saveEvent, evaluationId: selectedId });
+        throw err;
+      }
     }).catch((err: any) => toast.error(err?.message || "Enregistrement impossible"));
 
   const kpis = useMemo(() => {
@@ -656,6 +782,14 @@ export function QualitePage() {
               ))}
             </ol>
           </div>
+          <div className="card">
+            <h3>Re-notation après coaching</h3>
+            <ul style={{ margin: "12px 0 0", paddingLeft: 20, display: "grid", gap: 8 }}>
+              {QUALITY_GUIDE.renotation.map((line) => (
+                <li key={line} style={{ lineHeight: 1.55, fontSize: 14 }}>{line}</li>
+              ))}
+            </ul>
+          </div>
           <button type="button" className="btn btn-primary" onClick={startNewEvaluation}>
             <Plus size={18} />
             Commencer une écoute
@@ -815,6 +949,46 @@ export function QualitePage() {
               </tbody>
             </table>
           </div>
+          {import.meta.env.DEV && (
+            <div className="card" style={{ borderStyle: "dashed" }}>
+              <h3 style={{ marginTop: 0 }}>Données test (dev)</h3>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                Charge 6 écoutes fictives (préfixe <code>TEST-</code>) pour valider le module. À supprimer avant la prod.
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy || !user?.id}
+                  onClick={() =>
+                    run(async () => {
+                      const n = await seedQualityTestData(user!.id);
+                      logQuality("seed_test", { count: n });
+                      toast.success(`${n} écoutes test créées`);
+                      loadEvaluations();
+                    }).catch((err: any) => toast.error(err?.message || "Seed impossible"))
+                  }
+                >
+                  Charger données test
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const n = await purgeQualityTestData();
+                      logQuality("purge_test", { count: n });
+                      toast.success(`${n} écoutes test supprimées`);
+                      loadEvaluations();
+                    }).catch((err: any) => toast.error(err?.message || "Purge impossible"))
+                  }
+                >
+                  Supprimer données test
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -888,9 +1062,20 @@ export function QualitePage() {
                       <UserCircle size={14} />
                       Évalué par <strong>{displayName(ev.evaluator)}</strong>
                     </span>
-                    <button type="button" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => openDetail(ev.id)}>
-                      Ouvrir
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: "6px 12px", fontSize: 13 }}
+                        onClick={() => openRenote(ev.id)}
+                      >
+                        <RefreshCw size={14} />
+                        Renoter
+                      </button>
+                      <button type="button" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => openDetail(ev.id)}>
+                        Ouvrir
+                      </button>
+                    </div>
                   </div>
                 </article>
               );})}
@@ -911,250 +1096,68 @@ export function QualitePage() {
             Retour à l&apos;historique
           </button>
 
-          <div className="quality-form-layout">
-            <aside className="quality-form-sidebar">
-              <div className="quality-meta-card">
-                <h3>
-                  <span className="quality-step-badge">1</span>
-                  Identification
-                </h3>
-                <div className="field" style={{ marginBottom: 12 }}>
-                  <label className="label">ID appel Ubicentrex</label>
-                  <input
-                    type="text"
-                    className="input quality-call-id"
-                    value={formExternalCallId}
-                    onChange={(e) => setFormExternalCallId(e.target.value)}
-                    placeholder="Référence enregistrement"
-                  />
-                </div>
-                <div className="field" style={{ marginBottom: 12 }}>
-                  <label className="label">Date *</label>
-                  <input type="date" className="input" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
-                </div>
-                <div className="field" style={{ marginBottom: 12 }}>
-                  <label className="label">Conseiller *</label>
-                  <select className="select" value={formAgentId} onChange={(e) => setFormAgentId(e.target.value)}>
-                    <option value="">— Choisir —</option>
-                    {agents.map((a) => (
-                      <option key={a.id} value={a.id}>{displayName(a)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field" style={{ marginBottom: 12 }}>
-                  <label className="label">Campagne</label>
-                  <select className="select" value={formCampaignId} onChange={(e) => setFormCampaignId(e.target.value)}>
-                    <option value="">— Optionnel —</option>
-                    {campaigns.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field" style={{ marginBottom: 0 }}>
-                  <label className="label">Canal</label>
-                  <select className="select" value={formChannel} onChange={(e) => setFormChannel(e.target.value)}>
-                    {QUALITY_CHANNELS.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="quality-meta-card">
-                <h3>
-                  <span className="quality-step-badge">2</span>
-                  Résultat
-                </h3>
-                <div className="quality-score-panel">
-                  <div className="quality-score-box">
-                    <div className="label">Score écoute</div>
-                    <div className="value">{computed.finalScore}/20</div>
-                    <div className="sub">{computed.finalPercent}%</div>
-                  </div>
-                  <div className="quality-score-box">
-                    <div className="label">Exactitude</div>
-                    <div className="value">
-                      {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) ?? "—"}
-                      {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) != null && `/${CRITERION_RDV_MAX}`}
-                    </div>
-                    {rdvCriterionScore(formScores, CRITERION_EXACTITUDE) != null && (
-                      <div className="sub">
-                        {rdvCriterionPercent(CRITERION_EXACTITUDE, rdvCriterionScore(formScores, CRITERION_EXACTITUDE)!)}
-                        %
-                      </div>
-                    )}
-                  </div>
-                  <div className="quality-score-box">
-                    <div className="label">Procédure</div>
-                    <div className="value">
-                      {rdvCriterionScore(formScores, CRITERION_PROCEDURE) ?? "—"}
-                      {rdvCriterionScore(formScores, CRITERION_PROCEDURE) != null && `/${CRITERION_RDV_MAX}`}
-                    </div>
-                    {rdvCriterionScore(formScores, CRITERION_PROCEDURE) != null && (
-                      <div className="sub">
-                        {rdvCriterionPercent(CRITERION_PROCEDURE, rdvCriterionScore(formScores, CRITERION_PROCEDURE)!)}
-                        %
-                      </div>
-                    )}
-                  </div>
-                  <div className="quality-score-box" style={{ gridColumn: "1 / -1" }}>
-                    <div className="label">Mention · Statut</div>
-                    <div className="value" style={{ fontSize: "0.95rem" }}>{computed.mention}</div>
-                    <div style={{ marginTop: 6 }}>{statusBadge(computed.status)}</div>
-                  </div>
-                </div>
-                {(computed.hasMinusOne || computed.blockingFail) && (
-                  <div className="quality-alert">
-                    {computed.hasMinusOne && "Plafond -1 (max 8/20). "}
-                    {computed.blockingFail && "Plafond bloquant (max 12/20)."}
-                  </div>
-                )}
-              </div>
-
-              <div className="quality-form-actions">
-                <button type="button" className="btn btn-primary" disabled={busy || !formAgentId} onClick={handleSave}>
-                  <Save size={18} />
-                  {busy ? "..." : "Enregistrer"}
-                </button>
-                {tab === "detail" && (
-                  <button type="button" className="btn btn-secondary" onClick={handlePrint}>
-                    <Printer size={16} />
-                    Imprimer
-                  </button>
-                )}
-                {selectedId && (
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => {
-                      const ev = evaluations.find((e) => e.id === selectedId);
-                      if (ev) setToDelete(ev);
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-              </div>
-            </aside>
-
-            <main>
-              <div className="card">
-                <div className="quality-evaluator-banner">
-                  {evaluatorForDisplay && (
-                    <div className="avatar">{initials(evaluatorForDisplay)}</div>
-                  )}
-                  <div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2 }}>
-                      {tab === "detail" ? "Écoute réalisée par" : "Cette écoute sera enregistrée au nom de"}
-                    </div>
-                    <div style={{ fontWeight: 700, fontSize: 16 }}>{evaluatorLabel}</div>
-                    {tab === "nouvelle" && user && (
-                      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                        Votre nom apparaîtra dans l&apos;historique et sur la grille imprimée.
-                      </div>
-                    )}
-                  </div>
-                  {tab === "detail" && (
-                    <button type="button" className="btn btn-secondary" style={{ marginLeft: "auto" }} onClick={handlePrint}>
-                      <Printer size={16} />
-                      Imprimer
-                    </button>
-                  )}
-                </div>
-
-                <p className="quality-section-title">
-                  <span className="quality-step-badge">3</span> Grille de critères
-                </p>
-
-                {domainGroups(referential).map(({ domain, criteria }) => {
-                  const ds = domainScore(formScores, criteria);
-                  return (
-                    <div key={domain} style={{ marginBottom: 28 }}>
-                      <div className="quality-domain-header">
-                        <h3>{domain}</h3>
-                        <span className="quality-domain-pill">{ds.points}/{ds.max} pts · {ds.percent}%</span>
-                      </div>
-                      {criteria.map((criterion) => (
-                        <div key={criterion.id} className="quality-criterion">
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                            <div style={{ fontWeight: 600 }}>
-                              {criterion.name}
-                              {criterion.blocking && (
-                                <span className="badge" style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "#b91c1c", fontSize: 10 }}>
-                                  BLOQUANT
-                                </span>
-                              )}
-                            </div>
-                            <span className="muted" style={{ fontSize: 12 }}>Max {criterion.maxPoints}</span>
-                          </div>
-                          <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>{criterion.expected}</p>
-                          <div className="quality-score-btns">
-                            {scoreOptions(criterion).map((score) => (
-                              <button
-                                key={score}
-                                type="button"
-                                title={rubricLabel(criterion, score)}
-                                className={`quality-score-btn ${score === -1 ? "minus" : ""} ${formScores[criterion.id] === score ? "selected" : ""}`}
-                                onClick={() => setFormScores((prev) => ({ ...prev, [criterion.id]: score }))}
-                              >
-                                {score}
-                              </button>
-                            ))}
-                          </div>
-                          {rubricLabel(criterion, formScores[criterion.id]) && (
-                            <p className="muted" style={{ fontSize: 12, fontStyle: "italic", marginBottom: 8 }}>
-                              {rubricLabel(criterion, formScores[criterion.id])}
-                            </p>
-                          )}
-                          <div className="field" style={{ marginBottom: 0 }}>
-                            <label className="label" style={{ fontSize: 12 }}>Commentaire</label>
-                            <textarea
-                              className="input"
-                              rows={2}
-                              value={formComments[criterion.id] || ""}
-                              onChange={(e) => setFormComments((prev) => ({ ...prev, [criterion.id]: e.target.value }))}
-                              placeholder="Verbatim ou observation..."
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {computed.improvementAreas && (
-                <div className="card">
-                  <h3 style={{ marginTop: 0 }}>Axes d&apos;amélioration</h3>
-                  <p className="muted" style={{ margin: 0, fontSize: 14 }}>{computed.improvementAreas}</p>
-                </div>
-              )}
-
-              <div className="card">
-                <p className="quality-section-title">
-                  <span className="quality-step-badge">4</span> Débrief
-                </p>
-                <div style={{ display: "grid", gap: 14 }}>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label className="label">Points forts</label>
-                    <textarea className="input" rows={2} value={formPositive} onChange={(e) => setFormPositive(e.target.value)} />
-                  </div>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label className="label">Plan d&apos;action</label>
-                    <textarea className="input" rows={2} value={formActionPlan} onChange={(e) => setFormActionPlan(e.target.value)} />
-                  </div>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label className="label">Date débrief</label>
-                    <input type="date" className="input" value={formDebriefDate} onChange={(e) => setFormDebriefDate(e.target.value)} />
-                  </div>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label className="label">Conclusion</label>
-                    <textarea className="input" rows={2} value={formDebriefConclusion} onChange={(e) => setFormDebriefConclusion(e.target.value)} />
-                  </div>
-                </div>
-              </div>
-            </main>
-          </div>
+          <QualityFormWizard
+            mode={formMode}
+            step={formStep}
+            onStepChange={goToStep}
+            busy={busy}
+            referential={referential}
+            computed={computed}
+            agents={agents}
+            campaigns={campaigns}
+            evaluatorLabel={evaluatorLabel}
+            evaluatorInitials={evaluatorForDisplay ? initials(evaluatorForDisplay) : "—"}
+            formExternalCallId={formExternalCallId}
+            formDate={formDate}
+            formAgentId={formAgentId}
+            formCampaignId={formCampaignId}
+            formChannel={formChannel}
+            formScores={formScores}
+            formComments={formComments}
+            formPositive={formPositive}
+            formActionPlan={formActionPlan}
+            formDebriefDate={formDebriefDate}
+            formDebriefConclusion={formDebriefConclusion}
+            onExternalCallIdChange={setFormExternalCallId}
+            onDateChange={setFormDate}
+            onAgentChange={setFormAgentId}
+            onCampaignChange={setFormCampaignId}
+            onChannelChange={setFormChannel}
+            onScoreChange={handleScoreChange}
+            onCommentChange={(id, v) => setFormComments((prev) => ({ ...prev, [id]: v }))}
+            onPositiveChange={setFormPositive}
+            onActionPlanChange={(v) => {
+              setActionPlanTouched(true);
+              setFormActionPlan(v);
+            }}
+            onDebriefDateChange={setFormDebriefDate}
+            onConclusionChange={(v) => {
+              setDebriefConclusionTouched(true);
+              setFormDebriefConclusion(v);
+            }}
+            onRegenerateActionPlan={regenerateActionPlan}
+            onRegenerateConclusion={regenerateConclusion}
+            onSave={handleSave}
+            onPrint={formMode !== "create" ? handlePrint : undefined}
+            onDelete={
+              selectedId
+                ? () => {
+                    const ev = evaluations.find((e) => e.id === selectedId);
+                    if (ev) setToDelete(ev);
+                  }
+                : undefined
+            }
+            renoteBanner={
+              formMode === "renote" && selectedAgent && renotePreviousScore != null
+                ? {
+                    agentName: displayName(selectedAgent),
+                    evaluatedAt: fmtDate(formDate),
+                    previousScore: renotePreviousScore,
+                  }
+                : null
+            }
+            statusBadge={statusBadge}
+          />
         </div>
       )}
 

@@ -16,9 +16,9 @@ export const QUALITY_GUIDE = {
     {
       step: 2,
       excel: "2_Base_Ecoutes",
-      app: "Nouvelle écoute / Écoutes",
+      app: "Nouvelle écoute (3 étapes)",
       description:
-        "Saisissez vos écoutes : conseiller, campagne, canal et note par critère. La mention, le statut et les axes d'amélioration se calculent automatiquement.",
+        "Parcours en 3 étapes : Contexte → Grille compacte → Débrief. La mention, le statut et les axes se calculent en direct dans la barre latérale.",
     },
     {
       step: 3,
@@ -44,10 +44,16 @@ export const QUALITY_GUIDE = {
     {
       step: 6,
       excel: "6_Débrief_Conseiller",
-      app: "Débrief conseiller (dans le formulaire d'écoute)",
+      app: "Débrief conseiller (étape 3)",
       description:
-        "Complétez points forts, plan d'action, date de débrief et conclusion managériale. Les suggestions et axes sont pré-remplis depuis l'évaluation.",
+        "Points forts, plan d'action et conclusion auto-générée (modifiable, bouton Régénérer). Re-notation : bouton « Renoter » sur une écoute existante après coaching.",
     },
+  ],
+
+  renotation: [
+    "Après le coaching, ouvrez l'écoute via **Renoter** dans l'historique.",
+    "Modifiez la grille (étape 2) puis le débrief (étape 3) — la même fiche est mise à jour, sans nouvelle ligne.",
+    "L'évaluateur initial de l'écoute est conservé dans l'historique.",
   ],
 
   plafonds: [

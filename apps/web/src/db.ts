@@ -11,6 +11,9 @@ import type {
   UserRow,
 } from "@crc/types";
 import { diag, classifyError } from "./lib/diag";
+import { computeQualityResult, emptyQualityScores } from "./lib/quality-scoring";
+
+export const QUALITY_TEST_CALL_PREFIX = "TEST-";
 
 let campaignsLiteCache: { data: Campaign[]; at: number } | null = null;
 let usersLiteCache: { data: Pick<UserRow, "id" | "name" | "email" | "role" | "active">[]; at: number } | null = null;
@@ -750,6 +753,81 @@ export async function saveQualityEvaluation(payload: {
 export async function deleteQualityEvaluation(id: string) {
   const { error } = await supabase.from("QualityEvaluation").delete().eq("id", id);
   if (error) fail(error, "Impossible de supprimer l'écoute");
+}
+
+/** Données test qualité — préfixe externalCallId TEST- (à supprimer après validation UX). */
+export async function seedQualityTestData(evaluatorUserId: string): Promise<number> {
+  return track("seedQualityTestData", async () => {
+    const { data: agentRows, error: agentErr } = await supabase
+      .from("User")
+      .select("id")
+      .in("role", ["TELECONSEILLER", "SUPERVISEUR"])
+      .eq("active", true)
+      .limit(3);
+    if (agentErr) fail(agentErr, "Impossible de charger les conseillers");
+    if (!agentRows?.length) throw new Error("Aucun conseiller actif pour les données test");
+
+    const base = emptyQualityScores();
+    const scenarios: { suffix: string; scores: Partial<QualityScores>; daysAgo: number }[] = [
+      { suffix: "conforme", scores: {}, daysAgo: 1 },
+      { suffix: "coaching", scores: { accueil_ton: 1, communication_ecoute: 1, conclusion_synthese: 1 }, daysAgo: 3 },
+      { suffix: "bloquant", scores: { accueil_salutation: 1, identite_rgpd: 1 }, daysAgo: 5 },
+      { suffix: "critique", scores: { accueil_salutation: -1 }, daysAgo: 7 },
+      { suffix: "rdv-fort", scores: { rdv_exactitude: 3, rdv_procedure: 3 }, daysAgo: 2 },
+      { suffix: "rdv-faible", scores: { rdv_exactitude: 1, rdv_procedure: 0 }, daysAgo: 4 },
+    ];
+
+    const now = new Date().toISOString();
+    let inserted = 0;
+
+    for (let i = 0; i < scenarios.length; i++) {
+      const s = scenarios[i];
+      const agent = agentRows[i % agentRows.length];
+      const scores = { ...base, ...s.scores } as QualityScores;
+      const result = computeQualityResult(scores);
+      const evaluatedAt = new Date();
+      evaluatedAt.setDate(evaluatedAt.getDate() - s.daysAgo);
+      const dateStr = evaluatedAt.toISOString().slice(0, 10);
+
+      const { error } = await supabase.from("QualityEvaluation").insert({
+        evaluatedAt: dateStr,
+        agentUserId: agent.id,
+        evaluatorUserId,
+        campaignId: null,
+        externalCallId: `${QUALITY_TEST_CALL_PREFIX}${String(i + 1).padStart(3, "0")}-${s.suffix}`,
+        channel: "Appel entrant",
+        scores,
+        totalPoints: result.totalPoints,
+        finalScore: result.finalScore,
+        finalPercent: result.finalPercent,
+        mention: result.mention,
+        status: result.status,
+        improvementAreas: result.improvementAreas || null,
+        coachingPriority: result.coachingPriority,
+        immediateAction: result.immediateAction,
+        conform: result.conform,
+        comments: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (error) fail(error, `Impossible d'insérer la donnée test ${s.suffix}`);
+      inserted += 1;
+    }
+
+    return inserted;
+  });
+}
+
+export async function purgeQualityTestData(): Promise<number> {
+  return track("purgeQualityTestData", async () => {
+    const { data, error } = await supabase
+      .from("QualityEvaluation")
+      .delete()
+      .like("externalCallId", `${QUALITY_TEST_CALL_PREFIX}%`)
+      .select("id");
+    if (error) fail(error, "Impossible de supprimer les données test");
+    return data?.length ?? 0;
+  });
 }
 
 export async function getQualityReferential(): Promise<QualityReferentialConfig | null> {
