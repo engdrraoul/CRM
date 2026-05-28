@@ -50,9 +50,10 @@ import {
   scoreOptions,
 } from "./lib/quality-scoring";
 import { QUALITY_GUIDE } from "./lib/quality-guide";
-import { QualityPeriodPrint, QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
-import { QualityHistoryExport } from "./lib/quality-history-export";
-import { buildHistoryPdfFilename, downloadNodeAsPdf, downloadSectionsAsPdf } from "./lib/quality-pdf";
+import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
+import { QualityIndividualExport, buildIndividualPdfFilename } from "./lib/quality-individual-export";
+import { QualityGroupExport, buildGroupPdfFilename } from "./lib/quality-group-export";
+import { buildHistoryPdfFilename, downloadSectionsAsPdf } from "./lib/quality-pdf";
 import {
   agentKpisFromEvaluations,
   buildAgentChartData,
@@ -130,10 +131,10 @@ export function QualitePage() {
 
   const [referential, setReferential] = useState<QualityReferentialConfig>(getDefaultReferential());
   const [refDraft, setRefDraft] = useState<QualityReferentialConfig>(getDefaultReferential());
-  const printRef = useRef<HTMLDivElement>(null);
+  const printDialogRef = useRef<HTMLDivElement>(null);
+  const individualPdfRef = useRef<HTMLDivElement>(null);
   const pdfSingleRef = useRef<HTMLDivElement>(null);
-  const periodExportRef = useRef<HTMLDivElement>(null);
-  const historyExportRef = useRef<HTMLDivElement>(null);
+  const groupExportRef = useRef<HTMLDivElement>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [pdfSingleEv, setPdfSingleEv] = useState<QualityEvaluation | null>(null);
   const [periodExportMode, setPeriodExportMode] = useState<"liste" | "dashboard" | { type: "agent"; agentId: string } | null>(null);
@@ -536,6 +537,11 @@ export function QualitePage() {
     [periodExportAgentStats],
   );
 
+  const periodExportAgentGroups = useMemo(
+    () => groupEvaluationsByAgent(periodExportEvaluations, (agent) => displayName(agent)),
+    [periodExportEvaluations],
+  );
+
   const periodExportKeyScores = useMemo(
     () => ({
       exactitude: avgRdvCriterion(periodExportEvaluations, CRITERION_EXACTITUDE)?.pct ?? null,
@@ -543,6 +549,8 @@ export function QualitePage() {
     }),
     [periodExportEvaluations],
   );
+
+  const pdfGeneratedAt = fmtDate(new Date().toISOString().slice(0, 10));
 
   const filteredAgent = filterAgent ? agents.find((a) => a.id === filterAgent) : null;
 
@@ -567,6 +575,63 @@ export function QualitePage() {
     return parts.join(" · ");
   }, [filteredAgent, filterCampaign, filterEvaluator, campaigns, evaluators]);
 
+  const groupExportProps = useMemo(() => {
+    if (!periodExportMode) return null;
+    const isAgent = typeof periodExportMode === "object" && periodExportMode.type === "agent";
+    const mode =
+      periodExportMode === "liste" ? "history" as const : isAgent ? "agent" as const : "pilotage" as const;
+    const title =
+      mode === "history"
+        ? "Historique des écoutes qualité"
+        : mode === "agent"
+          ? periodExportAgentStats[0]?.name ?? "Conseiller"
+          : "Rapport de pilotage qualité";
+    return {
+      mode,
+      title,
+      periodLabel,
+      filterSummary,
+      generatedAt: pdfGeneratedAt,
+      kpis: periodExportMode === "liste" ? kpis : periodExportKpis,
+      keyScorePeriod:
+        periodExportMode === "liste"
+          ? {
+              exactitude: keyScorePeriod.exactitude?.pct ?? null,
+              procedure: keyScorePeriod.procedure?.pct ?? null,
+            }
+          : periodExportKeyScores,
+      agentStats: periodExportMode === "liste" ? agentStats : periodExportAgentStats,
+      agentDailyStats: periodExportMode === "liste" ? agentDailyStats : periodExportAgentDaily,
+      agentGroups: periodExportMode === "liste" ? historyAgentGroups : periodExportAgentGroups,
+      domainStats: periodExportDomainStats,
+      dailyStats: periodExportMode === "liste" ? dailyStats : periodExportDaily,
+      agentChartData: periodExportMode === "liste" ? agentChartData : periodExportAgentChart,
+      domainChartData: periodExportDomainChart,
+    };
+  }, [
+    periodExportMode,
+    periodExportAgentStats,
+    periodLabel,
+    filterSummary,
+    pdfGeneratedAt,
+    kpis,
+    periodExportKpis,
+    keyScorePeriod,
+    periodExportKeyScores,
+    agentStats,
+    periodExportAgentStats,
+    agentDailyStats,
+    periodExportAgentDaily,
+    historyAgentGroups,
+    periodExportAgentGroups,
+    periodExportDomainStats,
+    dailyStats,
+    periodExportDaily,
+    agentChartData,
+    periodExportAgentChart,
+    periodExportDomainChart,
+  ]);
+
   const slugForFilename = (value: string) =>
     value
       .normalize("NFD")
@@ -583,19 +648,23 @@ export function QualitePage() {
   const waitForCharts = () => new Promise<void>((resolve) => window.setTimeout(resolve, 500));
 
   const handlePrint = () => {
-    if (!printRef.current) return;
-    printQualityGrille(printRef.current);
+    if (!printDialogRef.current) return;
+    printQualityGrille(printDialogRef.current);
   };
 
   const handleExportGrillePdf = async () => {
-    if (!printRef.current) return;
+    if (!individualPdfRef.current) return;
     setExportingPdf(true);
-    const tId = toast.loading("Génération du PDF…");
+    const tId = toast.loading("Génération du rapport…");
     try {
-      const agentSlug = slugForFilename(selectedAgent ? displayName(selectedAgent) : "ecoute");
-      await downloadNodeAsPdf(printRef.current, `grille-ecoute_${agentSlug}_${formDate}.pdf`);
+      await waitForPaint();
+      const agentName = selectedAgent ? displayName(selectedAgent) : "ecoute";
+      await downloadSectionsAsPdf(
+        individualPdfRef.current,
+        buildIndividualPdfFilename(agentName, formDate),
+      );
       logQuality("export_pdf", { type: "grille", evaluationId: selectedId });
-      toast.success("PDF téléchargé", { id: tId });
+      toast.success("Rapport PDF téléchargé", { id: tId });
     } catch (err) {
       logQualityError("export_pdf_error", err, { type: "grille", evaluationId: selectedId });
       toast.error("Export PDF impossible", { id: tId });
@@ -605,17 +674,19 @@ export function QualitePage() {
   };
 
   const exportEvaluationPdf = async (ev: QualityEvaluation) => {
-    setPdfSingleEv(ev);
     setExportingPdf(true);
-    const tId = toast.loading("Génération du PDF…");
+    const tId = toast.loading("Génération du rapport…");
     try {
+      flushSync(() => setPdfSingleEv(ev));
       await waitForPaint();
-      if (!pdfSingleRef.current) throw new Error("Conteneur PDF indisponible");
-      const agentSlug = slugForFilename(displayName(ev.agent));
+      if (!pdfSingleRef.current?.querySelector("[data-pdf-section]")) {
+        throw new Error("Contenu PDF indisponible");
+      }
+      const agentName = displayName(ev.agent);
       const date = ev.evaluatedAt.slice(0, 10);
-      await downloadNodeAsPdf(pdfSingleRef.current, `grille-ecoute_${agentSlug}_${date}.pdf`);
+      await downloadSectionsAsPdf(pdfSingleRef.current, buildIndividualPdfFilename(agentName, date));
       logQuality("export_pdf", { type: "grille", evaluationId: ev.id });
-      toast.success("PDF téléchargé", { id: tId });
+      toast.success("Rapport PDF téléchargé", { id: tId });
     } catch (err) {
       logQualityError("export_pdf_error", err, { type: "grille", evaluationId: ev.id });
       toast.error("Export PDF impossible", { id: tId });
@@ -636,7 +707,7 @@ export function QualitePage() {
       flushSync(() => setPeriodExportMode("liste"));
       await waitForPaint();
       await waitForCharts();
-      const node = historyExportRef.current;
+      const node = groupExportRef.current;
       if (!node?.querySelector("[data-pdf-section]")) {
         throw new Error("Contenu PDF indisponible — réessayez");
       }
@@ -663,9 +734,13 @@ export function QualitePage() {
       flushSync(() => setPeriodExportMode(mode));
       await waitForPaint();
       await waitForCharts();
-      if (!periodExportRef.current) throw new Error("Conteneur PDF indisponible");
-      const datePart = new Date().toISOString().slice(0, 10);
-      await downloadNodeAsPdf(periodExportRef.current, `qualite-pilotage_${datePart}.pdf`);
+      if (!groupExportRef.current?.querySelector("[data-pdf-section]")) {
+        throw new Error("Conteneur PDF indisponible");
+      }
+      await downloadSectionsAsPdf(
+        groupExportRef.current,
+        buildGroupPdfFilename("pilotage", "pilotage", filterFrom, filterTo),
+      );
       logQuality("export_pdf", { type: mode, count: evaluations.length });
       toast.success("PDF téléchargé", { id: tId });
     } catch (err) {
@@ -684,10 +759,13 @@ export function QualitePage() {
       flushSync(() => setPeriodExportMode({ type: "agent", agentId }));
       await waitForPaint();
       await waitForCharts();
-      if (!periodExportRef.current) throw new Error("Conteneur PDF indisponible");
-      const agentSlug = slugForFilename(agentName);
-      const datePart = new Date().toISOString().slice(0, 10);
-      await downloadNodeAsPdf(periodExportRef.current, `qualite-agent_${agentSlug}_${datePart}.pdf`);
+      if (!groupExportRef.current?.querySelector("[data-pdf-section]")) {
+        throw new Error("Conteneur PDF indisponible");
+      }
+      await downloadSectionsAsPdf(
+        groupExportRef.current,
+        buildGroupPdfFilename("agent", agentName, filterFrom, filterTo),
+      );
       logQuality("export_pdf", { type: "agent", agentId, count: filterEvaluationsForAgent(evaluations, agentId).length });
       toast.success("PDF téléchargé", { id: tId });
     } catch (err) {
@@ -1165,7 +1243,7 @@ export function QualitePage() {
                 onClick={() => handleExportPeriodPdf("dashboard")}
               >
                 <FileDown size={16} />
-                {exportingPdf ? "PDF…" : "Exporter PDF"}
+                {exportingPdf ? "PDF…" : "Rapport direction PDF"}
               </button>
             )}
           </div>
@@ -1225,7 +1303,7 @@ export function QualitePage() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            title="Exporter PDF conseiller"
+                            title="Rapport PDF conseiller"
                             disabled={exportingPdf}
                             onClick={() => handleExportAgentPdf(a.id, a.name)}
                           >
@@ -1308,7 +1386,7 @@ export function QualitePage() {
                   {evaluations.length} écoute{evaluations.length > 1 ? "s" : ""}
                 </span>
                 <span className="quality-history-export-hint muted">
-                  Export PDF : synthèse, graphiques, détail par conseiller et par jour
+                  Rapport direction : synthèse, graphiques et détail par conseiller
                 </span>
               </div>
               <div className="quality-view-toggle">
@@ -1337,7 +1415,7 @@ export function QualitePage() {
                 title="Synthèse, graphiques et détail par conseiller et par jour"
               >
                 <FileDown size={16} />
-                {exportingPdf ? "PDF…" : "Exporter historique PDF"}
+                {exportingPdf ? "PDF…" : "Rapport direction PDF"}
               </button>
             </div>
           )}
@@ -1410,7 +1488,7 @@ export function QualitePage() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            title="Exporter PDF"
+                            title="Rapport écoute PDF"
                             disabled={exportingPdf}
                             onClick={() => exportEvaluationPdf(ev)}
                           >
@@ -1463,7 +1541,7 @@ export function QualitePage() {
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        title="Exporter PDF"
+                        title="Rapport écoute PDF"
                         disabled={exportingPdf}
                         onClick={() => exportEvaluationPdf(ev)}
                       >
@@ -1563,32 +1641,57 @@ export function QualitePage() {
       )}
 
       {showForm && (
-        <div ref={printRef} className="quality-pdf-root">
-          <QualityPrintGrille
-            config={referential}
-            evaluatedAt={formDate}
-            agentName={selectedAgent ? displayName(selectedAgent) : "—"}
-            evaluatorName={evaluatorLabel}
-            campaignName={selectedCampaign?.name || ""}
-            channel={formChannel}
-            externalCallId={formExternalCallId.trim() || null}
-            scores={formScores}
-            comments={formComments}
-            computed={computed}
-            evaluationId={selectedId || undefined}
-            positivePoints={formPositive.trim() || null}
-            actionPlan={formActionPlan.trim() || null}
-            debriefDate={formDebriefDate || null}
-            debriefConclusion={formDebriefConclusion.trim() || null}
-          />
-        </div>
+        <>
+          <div ref={printDialogRef} className="quality-pdf-root" aria-hidden>
+            <QualityPrintGrille
+              config={referential}
+              evaluatedAt={formDate}
+              agentName={selectedAgent ? displayName(selectedAgent) : "—"}
+              evaluatorName={evaluatorLabel}
+              campaignName={selectedCampaign?.name || ""}
+              channel={formChannel}
+              externalCallId={formExternalCallId.trim() || null}
+              scores={formScores}
+              comments={formComments}
+              computed={computed}
+              evaluationId={selectedId || undefined}
+              positivePoints={formPositive.trim() || null}
+              actionPlan={formActionPlan.trim() || null}
+              debriefDate={formDebriefDate || null}
+              debriefConclusion={formDebriefConclusion.trim() || null}
+            />
+          </div>
+          {formMode !== "create" && (
+            <div ref={individualPdfRef} className="quality-pdf-root" aria-hidden>
+              <QualityIndividualExport
+                config={referential}
+                evaluatedAt={formDate}
+                generatedAt={pdfGeneratedAt}
+                agentName={selectedAgent ? displayName(selectedAgent) : "—"}
+                evaluatorName={evaluatorLabel}
+                campaignName={selectedCampaign?.name || ""}
+                channel={formChannel}
+                externalCallId={formExternalCallId.trim() || null}
+                scores={formScores}
+                comments={formComments}
+                computed={computed}
+                evaluationId={selectedId || undefined}
+                positivePoints={formPositive.trim() || null}
+                actionPlan={formActionPlan.trim() || null}
+                debriefDate={formDebriefDate || null}
+                debriefConclusion={formDebriefConclusion.trim() || null}
+              />
+            </div>
+          )}
+        </>
       )}
 
-      <div ref={pdfSingleRef} className="quality-pdf-root">
+      <div ref={pdfSingleRef} className="quality-pdf-root" aria-hidden>
         {pdfSingleEv && (
-          <QualityPrintGrille
+          <QualityIndividualExport
             config={referential}
             evaluatedAt={pdfSingleEv.evaluatedAt.slice(0, 10)}
+            generatedAt={pdfGeneratedAt}
             agentName={displayName(pdfSingleEv.agent)}
             evaluatorName={displayName(pdfSingleEv.evaluator)}
             campaignName={pdfSingleEv.campaign?.name || ""}
@@ -1612,59 +1715,10 @@ export function QualitePage() {
         )}
       </div>
 
-      <div ref={historyExportRef} className="quality-pdf-root" aria-hidden>
-        {periodExportMode === "liste" && evaluations.length > 0 && (
-          <QualityHistoryExport
-            periodLabel={periodLabel}
-            filterSummary={filterSummary}
-            generatedAt={fmtDate(new Date().toISOString().slice(0, 10))}
-            kpis={kpis}
-            keyScorePeriod={{
-              exactitude: keyScorePeriod.exactitude?.pct ?? null,
-              procedure: keyScorePeriod.procedure?.pct ?? null,
-            }}
-            agentStats={agentStats}
-            agentDailyStats={agentDailyStats}
-            agentGroups={historyAgentGroups}
-            dailyStats={dailyStats}
-            agentChartData={agentChartData}
-            domainChartData={domainChartData}
-            evaluatorDisplay={(evaluator) => displayName(evaluator)}
-          />
-        )}
-      </div>
-
-      <div ref={periodExportRef} className="quality-pdf-root" aria-hidden>
-        {periodExportMode && periodExportMode !== "liste" && periodExportEvaluations.length > 0 && (
-          <QualityPeriodPrint
-            title={
-              typeof periodExportMode === "object" && periodExportMode.type === "agent"
-                ? `Rapport qualité — ${periodExportAgentStats[0]?.name ?? "Conseiller"}`
-                : periodExportMode === "dashboard"
-                  ? "Rapport pilotage qualité"
-                  : "Historique des écoutes"
-            }
-            periodLabel={periodLabel}
-            filterSummary={filterSummary}
-            kpis={periodExportKpis}
-            keyScorePeriod={periodExportKeyScores}
-            evaluations={periodExportEvaluations}
-            agentStats={
-              periodExportMode === "dashboard" || (typeof periodExportMode === "object" && periodExportMode.type === "agent")
-                ? periodExportAgentStats
-                : undefined
-            }
-            domainStats={
-              periodExportMode === "dashboard" || (typeof periodExportMode === "object" && periodExportMode.type === "agent")
-                ? periodExportDomainStats
-                : undefined
-            }
-            agentDailyStats={periodExportAgentDaily}
-            dailyStats={periodExportDaily}
-            agentChartData={periodExportAgentChart}
-            domainChartData={periodExportDomainChart}
-            showCharts
-            agentDisplay={(agent) => displayName(agent)}
+      <div ref={groupExportRef} className="quality-pdf-root" aria-hidden>
+        {groupExportProps && (
+          <QualityGroupExport
+            {...groupExportProps}
             evaluatorDisplay={(evaluator) => displayName(evaluator)}
           />
         )}

@@ -213,7 +213,7 @@ export function QualityFormWizard({
                   {onExportPdf && (
                     <button type="button" className="btn btn-secondary" onClick={onExportPdf} disabled={exportingPdf}>
                       <FileDown size={16} />
-                      {exportingPdf ? "PDF…" : "PDF"}
+                      {exportingPdf ? "PDF…" : "Rapport PDF"}
                     </button>
                   )}
                 </div>
