@@ -1443,3 +1443,180 @@
     width: 100%;
   }
 }
+
+/* ── Export PDF (grille + synthèse) ─────────────────────── */
+
+.quality-pdf-root {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: 820px;
+  background: #fff;
+  pointer-events: none;
+}
+
+.quality-print-grille {
+  font-family: Arial, sans-serif;
+  padding: 24px;
+  color: #0f172a;
+  font-size: 12px;
+  background: #fff;
+}
+
+.quality-print-grille h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.quality-print-id {
+  color: #64748b;
+  font-size: 11px;
+  margin: 0 0 16px;
+}
+
+.quality-print-meta {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.quality-print-meta th {
+  text-align: left;
+  width: 120px;
+  color: #64748b;
+  font-weight: 600;
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.quality-print-meta td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.quality-print-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.quality-print-table th,
+.quality-print-table td {
+  border: 1px solid #cbd5e1;
+  padding: 8px;
+  vertical-align: top;
+}
+
+.quality-print-table th {
+  background: #f1f5f9;
+  font-size: 11px;
+}
+
+.quality-print-footer {
+  margin-top: 16px;
+  font-weight: 600;
+}
+
+.quality-print-debrief {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.quality-print-debrief h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.quality-print-debrief p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.quality-print-period {
+  font-family: Arial, sans-serif;
+  padding: 24px;
+  color: #0f172a;
+  font-size: 12px;
+  background: #fff;
+}
+
+.quality-print-period h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.quality-print-period-sub {
+  color: #64748b;
+  margin: 0 0 16px;
+  font-size: 11px;
+}
+
+.quality-print-period-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.quality-print-period-kpi {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.quality-print-period-kpi strong {
+  display: block;
+  font-size: 16px;
+  margin-top: 4px;
+}
+
+.quality-print-period-section {
+  margin-top: 20px;
+}
+
+.quality-print-period-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.quality-charts-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.quality-chart-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--q-radius, 14px);
+  padding: 16px 16px 8px;
+}
+
+.quality-chart-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #0f172a);
+}
+
+.quality-charts-grid-print,
+.quality-chart-card-print {
+  break-inside: avoid;
+}
+
+.quality-chart-card-print {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  background: #fff;
+}
+
+@media (min-width: 900px) {
+  .quality-charts-grid:not(.quality-charts-grid-print) {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .quality-charts-grid:not(.quality-charts-grid-print) .quality-chart-card:first-child {
+    grid-column: 1 / -1;
+  }
+}

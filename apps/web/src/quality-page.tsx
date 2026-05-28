@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   RefreshCw,
+  FileDown,
 } from "lucide-react";
 import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
 import { useAuth } from "./auth";
@@ -48,7 +49,17 @@ import {
   scoreOptions,
 } from "./lib/quality-scoring";
 import { QUALITY_GUIDE } from "./lib/quality-guide";
-import { QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
+import { QualityPeriodPrint, QualityPrintGrille, printQualityGrille } from "./lib/quality-print";
+import { downloadNodeAsPdf } from "./lib/quality-pdf";
+import {
+  agentKpisFromEvaluations,
+  buildAgentChartData,
+  buildAgentDailyStats,
+  buildDailyStats,
+  buildDomainChartData,
+  filterEvaluationsForAgent,
+} from "./lib/quality-analytics";
+import { QualityChartsGrid } from "./components/quality/QualityCharts";
 import { buildActionPlanSuggestion, buildDebriefConclusion } from "./lib/quality-debrief";
 import { logQuality, logQualityError } from "./lib/quality-log";
 import { QualityFormWizard, type FormMode, type FormStep } from "./components/quality/QualityFormWizard";
@@ -117,6 +128,11 @@ export function QualitePage() {
   const [referential, setReferential] = useState<QualityReferentialConfig>(getDefaultReferential());
   const [refDraft, setRefDraft] = useState<QualityReferentialConfig>(getDefaultReferential());
   const printRef = useRef<HTMLDivElement>(null);
+  const pdfSingleRef = useRef<HTMLDivElement>(null);
+  const periodExportRef = useRef<HTMLDivElement>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [pdfSingleEv, setPdfSingleEv] = useState<QualityEvaluation | null>(null);
+  const [periodExportMode, setPeriodExportMode] = useState<"liste" | "dashboard" | { type: "agent"; agentId: string } | null>(null);
 
   const computed = useMemo(() => computeQualityResult(formScores, referential), [formScores, referential]);
 
@@ -436,6 +452,89 @@ export function QualitePage() {
     [evaluations],
   );
 
+  const dailyStats = useMemo(() => buildDailyStats(evaluations), [evaluations]);
+
+  const agentDailyStats = useMemo(
+    () => buildAgentDailyStats(evaluations, (agent) => displayName(agent)),
+    [evaluations],
+  );
+
+  const agentChartData = useMemo(() => buildAgentChartData(agentStats), [agentStats]);
+  const domainChartData = useMemo(() => buildDomainChartData(domainStats), [domainStats]);
+
+  const periodExportEvaluations = useMemo(() => {
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return filterEvaluationsForAgent(evaluations, periodExportMode.agentId);
+    }
+    return evaluations;
+  }, [evaluations, periodExportMode]);
+
+  const periodExportAgentStats = useMemo(() => {
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return agentStats.filter((a) => a.id === periodExportMode.agentId);
+    }
+    return agentStats;
+  }, [agentStats, periodExportMode]);
+
+  const periodExportAgentDaily = useMemo(() => {
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return agentDailyStats.filter((r) => r.agentId === periodExportMode.agentId);
+    }
+    return agentDailyStats;
+  }, [agentDailyStats, periodExportMode]);
+
+  const periodExportDaily = useMemo(() => {
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return buildDailyStats(periodExportEvaluations);
+    }
+    return dailyStats;
+  }, [dailyStats, periodExportEvaluations, periodExportMode]);
+
+  const periodExportKpis = useMemo(() => {
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return agentKpisFromEvaluations(periodExportEvaluations);
+    }
+    return kpis;
+  }, [kpis, periodExportEvaluations, periodExportMode]);
+
+  const periodExportDomainStats = useMemo(() => {
+    if (!periodExportEvaluations.length) return domainStats;
+    if (periodExportMode && typeof periodExportMode === "object" && periodExportMode.type === "agent") {
+      return domainGroups(referential).map(({ domain, criteria }) => {
+        const max = criteria.reduce((s, c) => s + c.maxPoints, 0);
+        let sum = 0;
+        const count = periodExportEvaluations.length;
+        for (const ev of periodExportEvaluations) {
+          for (const c of criteria) {
+            const v = ev.scores[c.id];
+            if (typeof v === "number") sum += v;
+          }
+        }
+        const avg = count ? Math.round((sum / count) * 10) / 10 : 0;
+        return { domain, avg, max, percent: max ? Math.round((avg / max) * 1000) / 10 : 0 };
+      });
+    }
+    return domainStats;
+  }, [domainStats, periodExportEvaluations, periodExportMode, referential]);
+
+  const periodExportDomainChart = useMemo(
+    () => buildDomainChartData(periodExportDomainStats),
+    [periodExportDomainStats],
+  );
+
+  const periodExportAgentChart = useMemo(
+    () => buildAgentChartData(periodExportAgentStats),
+    [periodExportAgentStats],
+  );
+
+  const periodExportKeyScores = useMemo(
+    () => ({
+      exactitude: avgRdvCriterion(periodExportEvaluations, CRITERION_EXACTITUDE)?.pct ?? null,
+      procedure: avgRdvCriterion(periodExportEvaluations, CRITERION_PROCEDURE)?.pct ?? null,
+    }),
+    [periodExportEvaluations],
+  );
+
   const filteredAgent = filterAgent ? agents.find((a) => a.id === filterAgent) : null;
 
   const periodLabel = useMemo(() => {
@@ -444,6 +543,122 @@ export function QualitePage() {
     if (filterTo) return `jusqu'au ${fmtDate(filterTo)}`;
     return "toutes périodes";
   }, [filterFrom, filterTo]);
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (filteredAgent) parts.push(`Conseiller : ${displayName(filteredAgent)}`);
+    if (filterCampaign) {
+      const name = campaigns.find((c) => c.id === filterCampaign)?.name;
+      if (name) parts.push(`Campagne : ${name}`);
+    }
+    if (filterEvaluator) {
+      const ev = evaluators.find((e) => e.id === filterEvaluator);
+      if (ev) parts.push(`Coach : ${displayName(ev)}`);
+    }
+    return parts.join(" · ");
+  }, [filteredAgent, filterCampaign, filterEvaluator, campaigns, evaluators]);
+
+  const slugForFilename = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w.-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48) || "export";
+
+  const waitForPaint = () =>
+    new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
+  const waitForCharts = () => new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    printQualityGrille(printRef.current);
+  };
+
+  const handleExportGrillePdf = async () => {
+    if (!printRef.current) return;
+    setExportingPdf(true);
+    const tId = toast.loading("Génération du PDF…");
+    try {
+      const agentSlug = slugForFilename(selectedAgent ? displayName(selectedAgent) : "ecoute");
+      await downloadNodeAsPdf(printRef.current, `grille-ecoute_${agentSlug}_${formDate}.pdf`);
+      logQuality("export_pdf", { type: "grille", evaluationId: selectedId });
+      toast.success("PDF téléchargé", { id: tId });
+    } catch (err) {
+      logQualityError("export_pdf_error", err, { type: "grille", evaluationId: selectedId });
+      toast.error("Export PDF impossible", { id: tId });
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  const exportEvaluationPdf = async (ev: QualityEvaluation) => {
+    setPdfSingleEv(ev);
+    setExportingPdf(true);
+    const tId = toast.loading("Génération du PDF…");
+    try {
+      await waitForPaint();
+      if (!pdfSingleRef.current) throw new Error("Conteneur PDF indisponible");
+      const agentSlug = slugForFilename(displayName(ev.agent));
+      const date = ev.evaluatedAt.slice(0, 10);
+      await downloadNodeAsPdf(pdfSingleRef.current, `grille-ecoute_${agentSlug}_${date}.pdf`);
+      logQuality("export_pdf", { type: "grille", evaluationId: ev.id });
+      toast.success("PDF téléchargé", { id: tId });
+    } catch (err) {
+      logQualityError("export_pdf_error", err, { type: "grille", evaluationId: ev.id });
+      toast.error("Export PDF impossible", { id: tId });
+    } finally {
+      setPdfSingleEv(null);
+      setExportingPdf(false);
+    }
+  };
+
+  const handleExportPeriodPdf = async (mode: "liste" | "dashboard") => {
+    setPeriodExportMode(mode);
+    setExportingPdf(true);
+    const tId = toast.loading("Génération du PDF…");
+    try {
+      await waitForPaint();
+      await waitForCharts();
+      if (!periodExportRef.current) throw new Error("Conteneur PDF indisponible");
+      const prefix = mode === "dashboard" ? "qualite-pilotage" : "qualite-historique";
+      const datePart = new Date().toISOString().slice(0, 10);
+      await downloadNodeAsPdf(periodExportRef.current, `${prefix}_${datePart}.pdf`);
+      logQuality("export_pdf", { type: mode, count: evaluations.length });
+      toast.success("PDF téléchargé", { id: tId });
+    } catch (err) {
+      logQualityError("export_pdf_error", err, { type: mode, count: evaluations.length });
+      toast.error("Export PDF impossible", { id: tId });
+    } finally {
+      setPeriodExportMode(null);
+      setExportingPdf(false);
+    }
+  };
+
+  const handleExportAgentPdf = async (agentId: string, agentName: string) => {
+    setPeriodExportMode({ type: "agent", agentId });
+    setExportingPdf(true);
+    const tId = toast.loading("Génération du PDF…");
+    try {
+      await waitForPaint();
+      await waitForCharts();
+      if (!periodExportRef.current) throw new Error("Conteneur PDF indisponible");
+      const agentSlug = slugForFilename(agentName);
+      const datePart = new Date().toISOString().slice(0, 10);
+      await downloadNodeAsPdf(periodExportRef.current, `qualite-agent_${agentSlug}_${datePart}.pdf`);
+      logQuality("export_pdf", { type: "agent", agentId, count: filterEvaluationsForAgent(evaluations, agentId).length });
+      toast.success("PDF téléchargé", { id: tId });
+    } catch (err) {
+      logQualityError("export_pdf_error", err, { type: "agent", agentId });
+      toast.error("Export PDF impossible", { id: tId });
+    } finally {
+      setPeriodExportMode(null);
+      setExportingPdf(false);
+    }
+  };
 
   const periodScoreBlock = evaluations.length > 0 && (tab === "liste" || tab === "dashboard") && (
     <div className="quality-metrics-strip">
@@ -509,11 +724,6 @@ export function QualitePage() {
 
   const selectedAgent = agents.find((a) => a.id === formAgentId);
   const selectedCampaign = campaigns.find((c) => c.id === formCampaignId);
-
-  const handlePrint = () => {
-    if (!printRef.current) return;
-    printQualityGrille(printRef.current);
-  };
 
   const handleSaveReferential = () =>
     run(async () => {
@@ -906,6 +1116,20 @@ export function QualitePage() {
 
       {tab === "dashboard" && (
         <>
+          <div className="quality-history-toolbar" style={{ marginBottom: 12 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Pilotage qualité</span>
+            {evaluations.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={exportingPdf || loading}
+                onClick={() => handleExportPeriodPdf("dashboard")}
+              >
+                <FileDown size={16} />
+                {exportingPdf ? "PDF…" : "Exporter PDF"}
+              </button>
+            )}
+          </div>
           <div className="quality-kpi-strip">
             {[
               { label: "Écoutes", value: kpis.count },
@@ -922,6 +1146,17 @@ export function QualitePage() {
             ))}
           </div>
 
+          {evaluations.length > 0 && (
+            <section className="quality-section">
+              <h3 className="quality-section-heading">Graphiques</h3>
+              <QualityChartsGrid
+                dailyData={dailyStats}
+                agentData={agentChartData}
+                domainData={domainChartData}
+              />
+            </section>
+          )}
+
           <section className="quality-section">
             <h3 className="quality-section-heading">Par conseiller</h3>
             {agentStats.length === 0 ? (
@@ -936,6 +1171,7 @@ export function QualitePage() {
                       <th>Moy. /20</th>
                       <th>Moy. %</th>
                       <th>Conformité</th>
+                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -946,6 +1182,18 @@ export function QualitePage() {
                         <td className="quality-td-strong">{a.avgScore}</td>
                         <td>{a.avgPercent}%</td>
                         <td>{a.conformRate}%</td>
+                        <td className="quality-td-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            title="Exporter PDF conseiller"
+                            disabled={exportingPdf}
+                            onClick={() => handleExportAgentPdf(a.id, a.name)}
+                          >
+                            <FileDown size={14} />
+                            PDF
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -953,6 +1201,36 @@ export function QualitePage() {
               </div>
             )}
           </section>
+
+          {agentDailyStats.length > 0 && (
+            <section className="quality-section">
+              <h3 className="quality-section-heading">Par conseiller et par jour</h3>
+              <div className="quality-table-wrap">
+                <table className="quality-data-table">
+                  <thead>
+                    <tr>
+                      <th>Conseiller</th>
+                      <th>Date</th>
+                      <th>Écoutes</th>
+                      <th>Moy. /20</th>
+                      <th>Moy. %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentDailyStats.map((row) => (
+                      <tr key={`${row.agentId}-${row.date}`}>
+                        <td className="quality-td-strong">{row.agentName}</td>
+                        <td>{row.dateLabel}</td>
+                        <td>{row.count}</td>
+                        <td className="quality-td-strong">{row.avgScore}</td>
+                        <td>{row.avgPercent}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section className="quality-section">
             <h3 className="quality-section-heading">Par domaine</h3>
@@ -1007,6 +1285,15 @@ export function QualitePage() {
                   Cartes
                 </button>
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={exportingPdf || loading}
+                onClick={() => handleExportPeriodPdf("liste")}
+              >
+                <FileDown size={16} />
+                {exportingPdf ? "PDF…" : "Exporter PDF"}
+              </button>
             </div>
           )}
 
@@ -1075,6 +1362,15 @@ export function QualitePage() {
                           <button type="button" className="btn btn-secondary btn-sm" onClick={() => openRenote(ev.id)}>
                             <RefreshCw size={14} />
                           </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            title="Exporter PDF"
+                            disabled={exportingPdf}
+                            onClick={() => exportEvaluationPdf(ev)}
+                          >
+                            <FileDown size={14} />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1118,6 +1414,15 @@ export function QualitePage() {
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openRenote(ev.id)}>
                         <RefreshCw size={14} />
                         Renoter
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        title="Exporter PDF"
+                        disabled={exportingPdf}
+                        onClick={() => exportEvaluationPdf(ev)}
+                      >
+                        <FileDown size={14} />
                       </button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(ev.id)}>
                         Ouvrir
@@ -1188,6 +1493,8 @@ export function QualitePage() {
             onRegenerateConclusion={regenerateConclusion}
             onSave={handleSave}
             onPrint={formMode !== "create" ? handlePrint : undefined}
+            onExportPdf={formMode !== "create" ? handleExportGrillePdf : undefined}
+            exportingPdf={exportingPdf}
             onDelete={
               selectedId
                 ? () => {
@@ -1211,7 +1518,7 @@ export function QualitePage() {
       )}
 
       {showForm && (
-        <div ref={printRef} style={{ position: "absolute", left: -9999, top: 0 }}>
+        <div ref={printRef} className="quality-pdf-root">
           <QualityPrintGrille
             config={referential}
             evaluatedAt={formDate}
@@ -1224,9 +1531,77 @@ export function QualitePage() {
             comments={formComments}
             computed={computed}
             evaluationId={selectedId || undefined}
+            positivePoints={formPositive.trim() || null}
+            actionPlan={formActionPlan.trim() || null}
+            debriefDate={formDebriefDate || null}
+            debriefConclusion={formDebriefConclusion.trim() || null}
           />
         </div>
       )}
+
+      <div ref={pdfSingleRef} className="quality-pdf-root">
+        {pdfSingleEv && (
+          <QualityPrintGrille
+            config={referential}
+            evaluatedAt={pdfSingleEv.evaluatedAt.slice(0, 10)}
+            agentName={displayName(pdfSingleEv.agent)}
+            evaluatorName={displayName(pdfSingleEv.evaluator)}
+            campaignName={pdfSingleEv.campaign?.name || ""}
+            channel={pdfSingleEv.channel}
+            externalCallId={pdfSingleEv.externalCallId}
+            scores={pdfSingleEv.scores}
+            comments={pdfSingleEv.comments || {}}
+            computed={{
+              finalScore: pdfSingleEv.finalScore,
+              finalPercent: pdfSingleEv.finalPercent ?? fmtPercent(pdfSingleEv.finalScore),
+              mention: pdfSingleEv.mention,
+              status: pdfSingleEv.status,
+              totalPoints: pdfSingleEv.totalPoints,
+            }}
+            evaluationId={pdfSingleEv.id}
+            positivePoints={pdfSingleEv.positivePoints}
+            actionPlan={pdfSingleEv.actionPlan}
+            debriefDate={pdfSingleEv.debriefDate?.slice(0, 10) || null}
+            debriefConclusion={pdfSingleEv.debriefConclusion}
+          />
+        )}
+      </div>
+
+      <div ref={periodExportRef} className="quality-pdf-root">
+        {periodExportMode && periodExportEvaluations.length > 0 && (
+          <QualityPeriodPrint
+            title={
+              typeof periodExportMode === "object" && periodExportMode.type === "agent"
+                ? `Rapport qualité — ${periodExportAgentStats[0]?.name ?? "Conseiller"}`
+                : periodExportMode === "dashboard"
+                  ? "Rapport pilotage qualité"
+                  : "Historique des écoutes"
+            }
+            periodLabel={periodLabel}
+            filterSummary={filterSummary}
+            kpis={periodExportKpis}
+            keyScorePeriod={periodExportKeyScores}
+            evaluations={periodExportEvaluations}
+            agentStats={
+              periodExportMode === "dashboard" || (typeof periodExportMode === "object" && periodExportMode.type === "agent")
+                ? periodExportAgentStats
+                : undefined
+            }
+            domainStats={
+              periodExportMode === "dashboard" || (typeof periodExportMode === "object" && periodExportMode.type === "agent")
+                ? periodExportDomainStats
+                : undefined
+            }
+            agentDailyStats={periodExportAgentDaily}
+            dailyStats={periodExportDaily}
+            agentChartData={periodExportAgentChart}
+            domainChartData={periodExportDomainChart}
+            showCharts
+            agentDisplay={(agent) => displayName(agent)}
+            evaluatorDisplay={(evaluator) => displayName(evaluator)}
+          />
+        )}
+      </div>
 
       <ConfirmModal
         open={!!toDelete}

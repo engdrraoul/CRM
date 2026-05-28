@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Printer, Save, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileDown, Printer, Save, Trash2 } from "lucide-react";
 import type { Campaign, QualityComputed, QualityReferentialConfig } from "@crc/types";
 import { QUALITY_CHANNELS, domainGroups, domainScore } from "../../lib/quality-scoring";
 import {
@@ -55,6 +55,8 @@ type Props = {
   onRegenerateConclusion: () => void;
   onSave: () => void;
   onPrint?: () => void;
+  onExportPdf?: () => void;
+  exportingPdf?: boolean;
   onDelete?: () => void;
   renoteBanner?: { agentName: string; evaluatedAt: string; previousScore: number } | null;
   statusBadge: (status: string) => ReactNode;
@@ -103,6 +105,8 @@ export function QualityFormWizard({
   onRegenerateConclusion,
   onSave,
   onPrint,
+  onExportPdf,
+  exportingPdf,
   onDelete,
   renoteBanner,
   statusBadge,
@@ -201,10 +205,18 @@ export function QualityFormWizard({
                 <div style={{ fontWeight: 700, fontSize: 16 }}>{evaluatorLabel}</div>
               </div>
               {onPrint && (mode === "edit" || mode === "renote") && (
-                <button type="button" className="btn btn-secondary" style={{ marginLeft: "auto" }} onClick={onPrint}>
-                  <Printer size={16} />
-                  Imprimer
-                </button>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <button type="button" className="btn btn-secondary" onClick={onPrint} disabled={exportingPdf}>
+                    <Printer size={16} />
+                    Imprimer
+                  </button>
+                  {onExportPdf && (
+                    <button type="button" className="btn btn-secondary" onClick={onExportPdf} disabled={exportingPdf}>
+                      <FileDown size={16} />
+                      {exportingPdf ? "PDF…" : "PDF"}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
