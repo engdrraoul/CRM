@@ -3423,6 +3423,8 @@ function ReportsTable({
   reports: DailyReport[];
   onEdit?: (report: DailyReport) => void;
 }) {
+  const { user } = useAuth();
+  const canEditValidated = user?.role === "ADMIN" || user?.role === "SUPERVISEUR";
   const colSpan = onEdit ? 11 : 10;
   return (
     <div className="card table-card">
@@ -3470,7 +3472,7 @@ function ReportsTable({
                   </td>
                   {onEdit && (
                     <td>
-                      {r.status === "VALIDATED" ? (
+                      {r.status === "VALIDATED" && !canEditValidated ? (
                         <span className="muted" style={{ fontSize: 12 }}>Verrouillé</span>
                       ) : (
                         <button

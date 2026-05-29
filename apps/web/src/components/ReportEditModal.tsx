@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DailyReport } from "@crc/types";
-import { updateReportById } from "../db";
+import { getReportEditLogs, updateReportById, type ReportEditLogRow } from "../db";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks/useAsync";
 import { toast } from "sonner";
@@ -58,6 +58,7 @@ export interface ReportEditModalProps {
 export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalProps) {
   const { user } = useAuth();
   const [state, setState] = useState<ReportFormState>(EMPTY_FORM);
+  const [logs, setLogs] = useState<ReportEditLogRow[]>([]);
   const [busy, run] = useAsync();
 
   useEffect(() => {
@@ -89,12 +90,28 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
     return () => document.removeEventListener("keydown", onKey);
   }, [report, busy, onClose]);
 
+  useEffect(() => {
+    if (!report || (user?.role !== "ADMIN" && user?.role !== "SUPERVISEUR")) {
+      setLogs([]);
+      return;
+    }
+    getReportEditLogs(report.id)
+      .then(setLogs)
+      .catch(() => setLogs([]));
+  }, [report?.id, user?.role]);
+
   if (!report) return null;
 
   const isOwner = user?.id === report.user.id;
+  const canEditValidated = user?.role === "ADMIN" || user?.role === "SUPERVISEUR";
+  const isValidatedLocked = report.status === "VALIDATED" && !canEditValidated;
   const canSubmit = isOwner && (report.status === "DRAFT" || report.status === "REJECTED");
 
   async function save(submit = false) {
+    if (isValidatedLocked) {
+      toast.error("Ce rapport validé ne peut être modifié que par un superviseur ou un administrateur.");
+      return;
+    }
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
          state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
       toast.error("Les valeurs ne peuvent pas être négatives");
@@ -157,8 +174,13 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
           <div>
             <h3 id="report-edit-title" style={{ margin: 0 }}>Modifier le rapport</h3>
             <p className="muted" style={{ marginTop: 6, marginBottom: 0, fontSize: 13 }}>
-              Corrigez les chiffres saisis. Un rapport validé ne peut plus être modifié.
+              Corrigez les chiffres saisis. Les modifications sont journalisées.
             </p>
+            {report.status === "VALIDATED" && canEditValidated && (
+              <p className="muted" style={{ marginTop: 6, marginBottom: 0, fontSize: 12 }}>
+                Rapport validé : modification autorisée pour superviseur/administrateur.
+              </p>
+            )}
           </div>
           <button className="btn btn-secondary" onClick={onClose} disabled={busy} aria-label="Fermer">
             <X size={18} />
@@ -198,8 +220,8 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                disabled={item.disabled}
-                style={item.disabled ? { background: "#f8fafc", cursor: "not-allowed", fontWeight: 700, color: "var(--primary)" } : {}}
+                disabled={item.disabled || isValidatedLocked}
+                style={(item.disabled || isValidatedLocked) ? { background: "#f8fafc", cursor: "not-allowed", fontWeight: 700, color: "var(--primary)" } : {}}
                 value={state[item.key]}
                 onChange={(e) => {
                   const val = e.target.value.replace(/[^0-9]/g, "");
@@ -220,15 +242,35 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
             className="textarea"
             rows={3}
             value={state.observations}
+            disabled={isValidatedLocked}
             onChange={(e) => setState((p) => ({ ...p, observations: e.target.value }))}
           />
         </div>
+
+        {canEditValidated && logs.length > 0 && (
+          <div style={{ marginTop: 20, padding: 12, background: "#f8fafc", borderRadius: 8 }}>
+            <div className="label" style={{ marginBottom: 8 }}>Logs de modification</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {logs.slice(0, 5).map((log) => (
+                <div key={log.id} style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  <strong style={{ color: "var(--text)" }}>
+                    {new Date(log.createdAt).toLocaleString("fr-FR")}
+                  </strong>
+                  {" - "}
+                  {log.actor?.name || log.actor?.email || log.actorRole || "Utilisateur"}
+                  {" - "}
+                  {log.action}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 24, justifyContent: "flex-end" }}>
           <button className="btn btn-secondary" onClick={onClose} disabled={busy}>
             Annuler
           </button>
-          <button className="btn btn-primary" onClick={() => save(false)} disabled={busy}>
+          <button className="btn btn-primary" onClick={() => save(false)} disabled={busy || isValidatedLocked}>
             <Save size={18} />
             {busy ? "Enregistrement..." : "Enregistrer"}
           </button>

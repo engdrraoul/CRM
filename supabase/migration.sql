@@ -949,6 +949,187 @@ CREATE POLICY "Users can update reports"
   );
 
 -- ============================================================
+-- 19b. Rapports journaliers - edition auditee des rapports
+-- valides par superviseur / administrateur
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public."ReportEditLog" (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "reportId" TEXT NOT NULL,
+  "actorId" UUID REFERENCES public."User"(id) ON DELETE SET NULL,
+  "actorRole" public."Role",
+  action TEXT NOT NULL DEFAULT 'update',
+  changes JSONB NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public."ReportEditLog" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins and superviseurs can read report edit logs" ON public."ReportEditLog";
+CREATE POLICY "Admins and superviseurs can read report edit logs"
+  ON public."ReportEditLog" FOR SELECT
+  TO authenticated
+  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+
+DROP POLICY IF EXISTS "Service role full access on report edit logs" ON public."ReportEditLog";
+CREATE POLICY "Service role full access on report edit logs"
+  ON public."ReportEditLog" FOR ALL
+  TO service_role
+  USING (true) WITH CHECK (true);
+
+CREATE INDEX IF NOT EXISTS "idx_ReportEditLog_reportId" ON public."ReportEditLog"("reportId");
+CREATE INDEX IF NOT EXISTS "idx_ReportEditLog_actorId" ON public."ReportEditLog"("actorId");
+CREATE INDEX IF NOT EXISTS "idx_ReportEditLog_createdAt" ON public."ReportEditLog"("createdAt");
+
+DROP FUNCTION IF EXISTS public.update_report_with_audit(
+  TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
+);
+CREATE OR REPLACE FUNCTION public.update_report_with_audit(
+  p_report_id TEXT,
+  p_incoming_total INTEGER,
+  p_outgoing_total INTEGER,
+  p_handled INTEGER,
+  p_missed INTEGER,
+  p_rdv_total INTEGER,
+  p_sms_total INTEGER,
+  p_observations TEXT DEFAULT NULL,
+  p_submit BOOLEAN DEFAULT FALSE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor_id UUID := auth.uid();
+  v_actor_role public."Role";
+  v_report public."DailyReport"%ROWTYPE;
+  v_before JSONB;
+  v_after JSONB;
+  v_next_status public."DailyReportStatus";
+BEGIN
+  IF v_actor_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'Non authentifie');
+  END IF;
+
+  SELECT role INTO v_actor_role FROM public."User" WHERE id = v_actor_id;
+  IF v_actor_role IS NULL THEN
+    RETURN jsonb_build_object('error', 'Utilisateur introuvable');
+  END IF;
+
+  SELECT * INTO v_report
+  FROM public."DailyReport"
+  WHERE id = p_report_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'Rapport introuvable');
+  END IF;
+
+  IF p_incoming_total < 0
+     OR p_outgoing_total < 0
+     OR p_handled < 0
+     OR p_missed < 0
+     OR p_rdv_total < 0
+     OR p_sms_total < 0 THEN
+    RETURN jsonb_build_object('error', 'Les valeurs ne peuvent pas etre negatives');
+  END IF;
+
+  IF v_report.status = 'VALIDATED' THEN
+    IF v_actor_role NOT IN ('ADMIN','SUPERVISEUR') THEN
+      RETURN jsonb_build_object('error', 'Ce rapport valide ne peut etre modifie que par un superviseur ou un administrateur');
+    END IF;
+
+    IF v_actor_role = 'SUPERVISEUR' AND NOT EXISTS (
+      SELECT 1 FROM public."CampaignMember" cm
+      WHERE cm."userId" = v_actor_id
+        AND cm."campaignId" = v_report."campaignId"
+        AND cm."endDate" IS NULL
+    ) THEN
+      RETURN jsonb_build_object('error', 'Vous ne pouvez modifier que les rapports de vos campagnes');
+    END IF;
+
+    v_next_status := 'VALIDATED';
+  ELSE
+    IF NOT (
+      v_actor_role IN ('ADMIN','COACH_QUALITE')
+      OR v_report."userId" = v_actor_id
+      OR (
+        v_actor_role = 'SUPERVISEUR'
+        AND EXISTS (
+          SELECT 1 FROM public."CampaignMember" cm
+          WHERE cm."userId" = v_actor_id
+            AND cm."campaignId" = v_report."campaignId"
+            AND cm."endDate" IS NULL
+        )
+      )
+    ) THEN
+      RETURN jsonb_build_object('error', 'Vous n''avez pas le droit de modifier ce rapport');
+    END IF;
+
+    IF p_submit THEN
+      v_next_status := 'SUBMITTED';
+    ELSIF v_report.status = 'REJECTED' THEN
+      v_next_status := 'DRAFT';
+    ELSE
+      v_next_status := v_report.status;
+    END IF;
+  END IF;
+
+  v_before := jsonb_build_object(
+    'incomingTotal', v_report."incomingTotal",
+    'outgoingTotal', v_report."outgoingTotal",
+    'handled', v_report.handled,
+    'missed', v_report.missed,
+    'rdvTotal', v_report."rdvTotal",
+    'smsTotal', v_report."smsTotal",
+    'observations', v_report.observations,
+    'status', v_report.status
+  );
+
+  UPDATE public."DailyReport"
+     SET "incomingTotal"   = p_incoming_total,
+         "outgoingTotal"   = p_outgoing_total,
+         handled           = p_handled,
+         missed            = p_missed,
+         "rdvTotal"        = p_rdv_total,
+         "smsTotal"        = p_sms_total,
+         observations      = p_observations,
+         status            = v_next_status,
+         "rejectionReason" = CASE WHEN v_report.status = 'REJECTED' AND NOT p_submit THEN NULL ELSE "rejectionReason" END,
+         "submittedAt"     = CASE WHEN p_submit THEN now() ELSE "submittedAt" END,
+         "updatedAt"       = now()
+   WHERE id = p_report_id;
+
+  v_after := jsonb_build_object(
+    'incomingTotal', p_incoming_total,
+    'outgoingTotal', p_outgoing_total,
+    'handled', p_handled,
+    'missed', p_missed,
+    'rdvTotal', p_rdv_total,
+    'smsTotal', p_sms_total,
+    'observations', p_observations,
+    'status', v_next_status
+  );
+
+  INSERT INTO public."ReportEditLog" ("reportId", "actorId", "actorRole", action, changes, "createdAt")
+  VALUES (
+    p_report_id,
+    v_actor_id,
+    v_actor_role,
+    CASE WHEN p_submit THEN 'submit' ELSE 'update' END,
+    jsonb_build_object('before', v_before, 'after', v_after),
+    now()
+  );
+
+  RETURN jsonb_build_object('ok', true, 'id', p_report_id);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_report_with_audit(
+  TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
+) TO authenticated;
+
+-- ============================================================
 -- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --

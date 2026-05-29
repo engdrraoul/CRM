@@ -322,6 +322,16 @@ type ReportFilters = {
   statusIn?: string[]; // include only these statuses
 };
 
+export type ReportEditLogRow = {
+  id: string;
+  reportId: string;
+  actorRole: Role | null;
+  action: string;
+  changes: { before?: Record<string, unknown>; after?: Record<string, unknown> };
+  createdAt: string;
+  actor?: { id: string; name: string | null; email: string | null } | null;
+};
+
 export async function getReports(filters: ReportFilters = {}): Promise<DailyReport[]> {
   return track(`getReports(${JSON.stringify(filters)})`, async () => {
     let query = supabase
@@ -431,50 +441,17 @@ export async function updateReportById(
   options?: { submit?: boolean },
 ): Promise<{ id: string }> {
   return track(`updateReportById(${reportId})`, async () => {
-    const now = new Date().toISOString();
-
-    const existing = await supabase
-      .from("DailyReport")
-      .select("id, status")
-      .eq("id", reportId)
-      .maybeSingle();
-
-    if (existing.error) fail(existing.error, "Impossible de charger le rapport");
-    if (!existing.data?.id) throw new Error("Rapport introuvable");
-
-    const currentStatus = (existing.data.status as string) ?? "DRAFT";
-
-    if (currentStatus === "VALIDATED") {
-      throw new Error("Ce rapport est validé et ne peut plus être modifié.");
-    }
-
-    let status = currentStatus;
-
-    if (options?.submit) {
-      status = "SUBMITTED";
-    } else if (currentStatus === "REJECTED") {
-      status = "DRAFT";
-    }
-
-    const payload: Record<string, unknown> = {
-      ...reportData,
-      status,
-      updatedAt: now,
-    };
-
-    if (currentStatus === "REJECTED" && !options?.submit) {
-      payload.rejectionReason = null;
-    }
-    if (options?.submit) {
-      payload.submittedAt = now;
-    }
-
-    const { data, error } = await supabase
-      .from("DailyReport")
-      .update(payload)
-      .eq("id", reportId)
-      .select("id")
-      .single();
+    const { data, error } = await supabase.rpc("update_report_with_audit", {
+      p_report_id: reportId,
+      p_incoming_total: reportData.incomingTotal,
+      p_outgoing_total: reportData.outgoingTotal,
+      p_handled: reportData.handled,
+      p_missed: reportData.missed,
+      p_rdv_total: reportData.rdvTotal,
+      p_sms_total: reportData.smsTotal,
+      p_observations: reportData.observations || null,
+      p_submit: options?.submit ?? false,
+    });
 
     if (error) {
       const msg = (error.message || "").toLowerCase();
@@ -483,7 +460,21 @@ export async function updateReportById(
       }
       fail(error, "Impossible de modifier le rapport");
     }
-    return data!;
+    if (data?.error) throw new Error(data.error);
+    return { id: data?.id ?? reportId };
+  });
+}
+
+export async function getReportEditLogs(reportId: string): Promise<ReportEditLogRow[]> {
+  return track(`getReportEditLogs(${reportId})`, async () => {
+    const { data, error } = await supabase
+      .from("ReportEditLog")
+      .select(`id, "reportId", "actorRole", action, changes, "createdAt", actor:User!actorId(id, name, email)`)
+      .eq("reportId", reportId)
+      .order("createdAt", { ascending: false });
+
+    if (error) fail(error, "Impossible de charger les logs du rapport");
+    return (data || []) as ReportEditLogRow[];
   });
 }
 
