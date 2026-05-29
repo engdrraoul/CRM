@@ -379,6 +379,10 @@ export async function upsertReport(reportData: {
   const existingStatus = (existing.data?.status as string | undefined) ?? null;
   const isNew = !existing.data?.id;
 
+  if (!isNew && existingStatus === "VALIDATED") {
+    throw new Error("Ce rapport est validé et ne peut plus être modifié.");
+  }
+
   // Only force DRAFT on insert; preserve existing status on update
   const payload = {
     ...reportData,
@@ -411,6 +415,76 @@ export async function upsertReport(reportData: {
     fail(error, "Impossible d'enregistrer le rapport");
   }
   return data!;
+}
+
+export async function updateReportById(
+  reportId: string,
+  reportData: {
+    incomingTotal: number;
+    outgoingTotal: number;
+    handled: number;
+    missed: number;
+    rdvTotal: number;
+    smsTotal: number;
+    observations?: string;
+  },
+  options?: { submit?: boolean },
+): Promise<{ id: string }> {
+  return track(`updateReportById(${reportId})`, async () => {
+    const now = new Date().toISOString();
+
+    const existing = await supabase
+      .from("DailyReport")
+      .select("id, status")
+      .eq("id", reportId)
+      .maybeSingle();
+
+    if (existing.error) fail(existing.error, "Impossible de charger le rapport");
+    if (!existing.data?.id) throw new Error("Rapport introuvable");
+
+    const currentStatus = (existing.data.status as string) ?? "DRAFT";
+
+    if (currentStatus === "VALIDATED") {
+      throw new Error("Ce rapport est validé et ne peut plus être modifié.");
+    }
+
+    let status = currentStatus;
+
+    if (options?.submit) {
+      status = "SUBMITTED";
+    } else if (currentStatus === "REJECTED") {
+      status = "DRAFT";
+    }
+
+    const payload: Record<string, unknown> = {
+      ...reportData,
+      status,
+      updatedAt: now,
+    };
+
+    if (currentStatus === "REJECTED" && !options?.submit) {
+      payload.rejectionReason = null;
+    }
+    if (options?.submit) {
+      payload.submittedAt = now;
+    }
+
+    const { data, error } = await supabase
+      .from("DailyReport")
+      .update(payload)
+      .eq("id", reportId)
+      .select("id")
+      .single();
+
+    if (error) {
+      const msg = (error.message || "").toLowerCase();
+      if (error.code === "42501" || msg.includes("row-level security") || msg.includes("rls")) {
+        throw new Error("Vous n'avez pas le droit de modifier ce rapport.");
+      }
+      fail(error, "Impossible de modifier le rapport");
+    }
+    return data!;
+  });
 }
 
 export async function submitReport(id: string) {

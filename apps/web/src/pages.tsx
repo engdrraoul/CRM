@@ -19,6 +19,7 @@ import { supabase } from "./supabase";
 import { useAsync } from "./hooks/useAsync";
 import { useReloadOnFocus } from "./hooks/useReloadOnFocus";
 import { ConfirmModal } from "./components/ConfirmModal";
+import { ReportEditModal } from "./components/ReportEditModal";
 import { diag } from "./lib/diag";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -96,6 +97,16 @@ type ReportFormState = {
   rdvTotal: number;
   smsTotal: number;
   observations: string;
+};
+
+const EMPTY_REPORT_FORM: ReportFormState = {
+  incomingTotal: 0,
+  outgoingTotal: 0,
+  handled: 0,
+  missed: 0,
+  rdvTotal: 0,
+  smsTotal: 0,
+  observations: "",
 };
 
 /**
@@ -187,7 +198,9 @@ export function RapportPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [state, setState] = useState<ReportFormState>({ incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0, observations: "" });
+  const [state, setState] = useState<ReportFormState>(EMPTY_REPORT_FORM);
+  const [existingStatus, setExistingStatus] = useState<string | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
   
   useEffect(() => {
     setState(prev => ({
@@ -216,10 +229,52 @@ export function RapportPage() {
       });
   }, [user?.id, user?.role]);
 
+  useEffect(() => {
+    if (!campaignId || !user?.id) {
+      setReportId(null);
+      setExistingStatus(null);
+      setState(EMPTY_REPORT_FORM);
+      return;
+    }
+    setLoadingReport(true);
+    getReports({ userId: user.id, campaignId, dateFrom: date, dateTo: date })
+      .then((reports) => {
+        const existing = reports[0];
+        if (existing) {
+          setReportId(existing.id);
+          setExistingStatus(existing.status);
+          setState({
+            incomingTotal: existing.incomingTotal,
+            outgoingTotal: existing.outgoingTotal,
+            handled: existing.handled,
+            missed: existing.missed,
+            rdvTotal: existing.rdvTotal,
+            smsTotal: existing.smsTotal,
+            observations: existing.observations ?? "",
+          });
+        } else {
+          setReportId(null);
+          setExistingStatus(null);
+          setState(EMPTY_REPORT_FORM);
+        }
+      })
+      .catch((err) => {
+        console.error("[Rapport] load existing failed", err);
+      })
+      .finally(() => setLoadingReport(false));
+  }, [date, campaignId, user?.id]);
+
   const [busy, run] = useAsync();
+  const isValidated = existingStatus === "VALIDATED";
 
   async function save(submit = false) {
     setMessage("");
+    if (isValidated) {
+      const msg = "Ce rapport est validé et ne peut plus être modifié.";
+      toast.error(msg);
+      setMessage("Erreur : " + msg);
+      return;
+    }
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
          state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
       const msg = "Les valeurs ne peuvent pas être négatives";
@@ -233,9 +288,11 @@ export function RapportPage() {
         setReportId(report.id);
         if (submit) {
           await submitReport(report.id);
+          setExistingStatus("SUBMITTED");
           toast.success("Rapport soumis avec succès !");
           setMessage("Rapport soumis avec succès.");
         } else {
+          setExistingStatus((s) => s ?? "DRAFT");
           toast.info("Brouillon enregistré.");
           setMessage("Brouillon enregistré.");
         }
@@ -253,8 +310,19 @@ export function RapportPage() {
         <div>
           <h2>Mon rapport</h2>
           <p className="muted" style={{ marginTop: 4 }}>
-            Renseignez vos indicateurs journaliers. Saisissez directement les chiffres dans les champs.
+            Renseignez vos indicateurs journaliers. Un rapport existant pour la date et la campagne sélectionnées est rechargé automatiquement.
           </p>
+          {existingStatus && (
+            <div style={{ marginTop: 8 }}>
+              <span className={`badge ${getStatusBadgeClass(existingStatus)}`}>{existingStatus}</span>
+              {loadingReport && <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>Chargement...</span>}
+              {isValidated && (
+                <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                  Rapport verrouillé après validation.
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ background: "rgba(37, 99, 235, 0.1)", padding: "12px", borderRadius: "12px" }}>
           <FileEdit color="var(--primary)" />
@@ -318,8 +386,8 @@ export function RapportPage() {
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
-              disabled={(item as any).disabled}
-              style={(item as any).disabled ? { background: '#f8fafc', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}}
+              disabled={(item as any).disabled || isValidated || loadingReport}
+              style={((item as any).disabled || isValidated) ? { background: '#f8fafc', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}}
               value={state[item.key as keyof ReportFormState]}
               onChange={(e) => {
                 const val = e.target.value.replace(/[^0-9]/g, '');
@@ -342,18 +410,19 @@ export function RapportPage() {
           rows={4}
           placeholder="Commentaires, contexte, anomalies..."
           value={state.observations}
+          disabled={isValidated || loadingReport}
           onChange={(e) => setState((p) => ({ ...p, observations: e.target.value }))}
         />
       </div>
 
       <div className="row" style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: "24px" }}>
-        <button className="btn btn-secondary" disabled={!campaignId || busy} onClick={() => save(false)}>
+        <button className="btn btn-secondary" disabled={!campaignId || busy || isValidated} onClick={() => save(false)}>
           <Save size={18} />
           {busy ? "Enregistrement..." : "Enregistrer brouillon"}
         </button>
-        <button className="btn btn-primary" disabled={!campaignId || busy} onClick={() => save(true)}>
+        <button className="btn btn-primary" disabled={!campaignId || busy || isValidated} onClick={() => save(true)}>
           <Send size={18} />
-          {busy ? "Soumission..." : "Soumettre le rapport"}
+          {busy ? "Soumission..." : reportId ? "Resoumettre le rapport" : "Soumettre le rapport"}
         </button>
         {reportId && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }} className="muted">
@@ -387,6 +456,7 @@ export function MesSaisiesPage() {
   const { user } = useAuth();
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null);
 
   const load = () => {
     if (!user?.id) {
@@ -425,7 +495,14 @@ export function MesSaisiesPage() {
           <div className="muted">Chargement de vos rapports...</div>
         </div>
       ) : (
-        <ReportsTable title="Historique" reports={reports} />
+        <>
+          <ReportsTable title="Historique" reports={reports} onEdit={setEditingReport} />
+          <ReportEditModal
+            report={editingReport}
+            onClose={() => setEditingReport(null)}
+            onSaved={load}
+          />
+        </>
       )}
     </div>
   );
@@ -467,6 +544,7 @@ export function ValidationPage() {
 
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const [acting, setActing] = useState<Set<string>>(new Set());
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null);
 
   async function act(id: string, action: "validate" | "reject") {
     if (acting.has(id)) return; // anti double-submit
@@ -609,7 +687,15 @@ export function ValidationPage() {
                     style={{ fontSize: "13px" }}
                   />
                 </div>
-                <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setEditingReport(r)}
+                    disabled={acting.has(r.id)}
+                  >
+                    <FileEdit size={18} />
+                    Modifier
+                  </button>
                   <button
                     className="btn btn-primary"
                     onClick={() => act(r.id, "validate")}
@@ -633,6 +719,11 @@ export function ValidationPage() {
           ))}
         </div>
       )}
+      <ReportEditModal
+        report={editingReport}
+        onClose={() => setEditingReport(null)}
+        onSaved={load}
+      />
     </div>
   );
 }
@@ -1196,6 +1287,7 @@ export function AllReportsPage() {
   const [loading, setLoading] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState("");
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null);
   const today = new Date().toISOString().slice(0, 10);
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
@@ -1262,7 +1354,14 @@ export function AllReportsPage() {
       {loading ? (
         <div className="card" style={{ textAlign: "center", padding: "48px" }}>Chargement...</div>
       ) : (
-        <ReportsTable title="Liste des rapports" reports={reports} />
+        <>
+          <ReportsTable title="Liste des rapports" reports={reports} onEdit={setEditingReport} />
+          <ReportEditModal
+            report={editingReport}
+            onClose={() => setEditingReport(null)}
+            onSaved={load}
+          />
+        </>
       )}
     </div>
   );
@@ -3315,7 +3414,16 @@ function getStatusBadgeClass(status: string) {
   }
 }
 
-function ReportsTable({ title, reports }: { title: string; reports: DailyReport[] }) {
+function ReportsTable({
+  title,
+  reports,
+  onEdit,
+}: {
+  title: string;
+  reports: DailyReport[];
+  onEdit?: (report: DailyReport) => void;
+}) {
+  const colSpan = onEdit ? 11 : 10;
   return (
     <div className="card table-card">
       <h2 style={{ marginBottom: "20px" }}>{title}</h2>
@@ -3333,12 +3441,13 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
               <th>RDV</th>
               <th>Messages envoyés</th>
               <th>Statut</th>
+              {onEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={10} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                <td colSpan={colSpan} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
                   Aucun rapport trouvé
                 </td>
               </tr>
@@ -3359,6 +3468,22 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
                       {r.status}
                     </span>
                   </td>
+                  {onEdit && (
+                    <td>
+                      {r.status === "VALIDATED" ? (
+                        <span className="muted" style={{ fontSize: 12 }}>Verrouillé</span>
+                      ) : (
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: "6px 10px", fontSize: 12 }}
+                          onClick={() => onEdit(r)}
+                        >
+                          <FileEdit size={14} />
+                          Modifier
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))
             )}

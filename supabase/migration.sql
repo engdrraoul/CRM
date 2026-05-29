@@ -344,16 +344,13 @@ CREATE POLICY "Users can update reports"
   ON public."DailyReport" FOR UPDATE
   TO authenticated
   USING (
-    "userId" = auth.uid()
-    OR public.current_user_role() IN ('ADMIN','COACH_QUALITE')
-    OR (
-      public.current_user_role() = 'SUPERVISEUR'
-      AND EXISTS (
-        SELECT 1 FROM public."CampaignMember" cm
-        WHERE cm."userId" = auth.uid()
-          AND cm."endDate" IS NULL
-          AND cm."campaignId" = public."DailyReport"."campaignId"
-      )
+    public.current_user_role() IN ('ADMIN','COACH_QUALITE')
+    OR "userId" = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public."CampaignMember" cm
+      WHERE cm."userId" = auth.uid()
+        AND cm."endDate" IS NULL
+        AND cm."campaignId" = public."DailyReport"."campaignId"
     )
   );
 
@@ -931,6 +928,25 @@ CREATE POLICY "Coach and admin can upsert quality referential"
   TO authenticated
   USING (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'))
   WITH CHECK (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
+
+-- ============================================================
+-- 19. Rapports journaliers — édition par tous les membres de campagne
+-- (idempotent : recrée la policy UPDATE si déjà appliquée)
+-- ============================================================
+DROP POLICY IF EXISTS "Users can update reports" ON public."DailyReport";
+CREATE POLICY "Users can update reports"
+  ON public."DailyReport" FOR UPDATE
+  TO authenticated
+  USING (
+    public.current_user_role() IN ('ADMIN','COACH_QUALITE')
+    OR "userId" = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public."CampaignMember" cm
+      WHERE cm."userId" = auth.uid()
+        AND cm."endDate" IS NULL
+        AND cm."campaignId" = public."DailyReport"."campaignId"
+    )
+  );
 
 -- ============================================================
 -- 16. (Optional) pg_cron scheduling
