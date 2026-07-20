@@ -177,6 +177,10 @@ ALTER TABLE public."DailyReport"
   ALTER COLUMN "createdAt" SET DEFAULT now(),
   ALTER COLUMN "updatedAt" SET DEFAULT now();
 
+-- Average handling duration stored in total seconds (UI displays mm:ss).
+ALTER TABLE public."DailyReport"
+  ADD COLUMN IF NOT EXISTS "avgHandlingDuration" INTEGER NOT NULL DEFAULT 0;
+
 -- Ensure Notification fields are generated when RPCs omit them.
 DO $$
 DECLARE v_notification_id_type text;
@@ -625,7 +629,8 @@ BEGIN
      OR v_report."handled" < 0
      OR v_report."missed" < 0
      OR v_report."rdvTotal" < 0
-     OR v_report."smsTotal" < 0 THEN
+     OR v_report."smsTotal" < 0
+     OR COALESCE(v_report."avgHandlingDuration", 0) < 0 THEN
     RETURN jsonb_build_object('error', 'Les valeurs ne peuvent pas être négatives');
   END IF;
 
@@ -983,6 +988,9 @@ CREATE INDEX IF NOT EXISTS "idx_ReportEditLog_createdAt" ON public."ReportEditLo
 DROP FUNCTION IF EXISTS public.update_report_with_audit(
   TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
 );
+DROP FUNCTION IF EXISTS public.update_report_with_audit(
+  TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
+);
 CREATE OR REPLACE FUNCTION public.update_report_with_audit(
   p_report_id TEXT,
   p_incoming_total INTEGER,
@@ -991,6 +999,7 @@ CREATE OR REPLACE FUNCTION public.update_report_with_audit(
   p_missed INTEGER,
   p_rdv_total INTEGER,
   p_sms_total INTEGER,
+  p_avg_handling_duration INTEGER DEFAULT 0,
   p_observations TEXT DEFAULT NULL,
   p_submit BOOLEAN DEFAULT FALSE
 )
@@ -1030,7 +1039,8 @@ BEGIN
      OR p_handled < 0
      OR p_missed < 0
      OR p_rdv_total < 0
-     OR p_sms_total < 0 THEN
+     OR p_sms_total < 0
+     OR p_avg_handling_duration < 0 THEN
     RETURN jsonb_build_object('error', 'Les valeurs ne peuvent pas etre negatives');
   END IF;
 
@@ -1082,22 +1092,24 @@ BEGIN
     'missed', v_report.missed,
     'rdvTotal', v_report."rdvTotal",
     'smsTotal', v_report."smsTotal",
+    'avgHandlingDuration', COALESCE(v_report."avgHandlingDuration", 0),
     'observations', v_report.observations,
     'status', v_report.status
   );
 
   UPDATE public."DailyReport"
-     SET "incomingTotal"   = p_incoming_total,
-         "outgoingTotal"   = p_outgoing_total,
-         handled           = p_handled,
-         missed            = p_missed,
-         "rdvTotal"        = p_rdv_total,
-         "smsTotal"        = p_sms_total,
-         observations      = p_observations,
-         status            = v_next_status,
-         "rejectionReason" = CASE WHEN v_report.status = 'REJECTED' AND NOT p_submit THEN NULL ELSE "rejectionReason" END,
-         "submittedAt"     = CASE WHEN p_submit THEN now() ELSE "submittedAt" END,
-         "updatedAt"       = now()
+     SET "incomingTotal"       = p_incoming_total,
+         "outgoingTotal"       = p_outgoing_total,
+         handled               = p_handled,
+         missed                = p_missed,
+         "rdvTotal"            = p_rdv_total,
+         "smsTotal"            = p_sms_total,
+         "avgHandlingDuration" = p_avg_handling_duration,
+         observations          = p_observations,
+         status                = v_next_status,
+         "rejectionReason"     = CASE WHEN v_report.status = 'REJECTED' AND NOT p_submit THEN NULL ELSE "rejectionReason" END,
+         "submittedAt"         = CASE WHEN p_submit THEN now() ELSE "submittedAt" END,
+         "updatedAt"           = now()
    WHERE id = p_report_id;
 
   v_after := jsonb_build_object(
@@ -1107,6 +1119,7 @@ BEGIN
     'missed', p_missed,
     'rdvTotal', p_rdv_total,
     'smsTotal', p_sms_total,
+    'avgHandlingDuration', p_avg_handling_duration,
     'observations', p_observations,
     'status', v_next_status
   );
@@ -1126,8 +1139,10 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.update_report_with_audit(
-  TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
+  TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT, BOOLEAN
 ) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
 
 -- ============================================================
 -- 16. (Optional) pg_cron scheduling

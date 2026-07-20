@@ -21,6 +21,7 @@ import { useReloadOnFocus } from "./hooks/useReloadOnFocus";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { ReportEditModal } from "./components/ReportEditModal";
 import { diag } from "./lib/diag";
+import { formatDurationMmSs, parseDurationMmSs, weightedAvgDuration } from "./lib/duration";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -37,6 +38,7 @@ import {
   PhoneMissed, 
   ClipboardCheck, 
   MessageSquare,
+  Timer,
   Filter,
   TrendingUp,
   Settings,
@@ -96,6 +98,7 @@ type ReportFormState = {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  avgHandlingDuration: number;
   observations: string;
 };
 
@@ -106,6 +109,7 @@ const EMPTY_REPORT_FORM: ReportFormState = {
   missed: 0,
   rdvTotal: 0,
   smsTotal: 0,
+  avgHandlingDuration: 0,
   observations: "",
 };
 
@@ -199,6 +203,7 @@ export function RapportPage() {
   const [campaignId, setCampaignId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [state, setState] = useState<ReportFormState>(EMPTY_REPORT_FORM);
+  const [durationText, setDurationText] = useState("00:00");
   const [existingStatus, setExistingStatus] = useState<string | null>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   
@@ -234,6 +239,7 @@ export function RapportPage() {
       setReportId(null);
       setExistingStatus(null);
       setState(EMPTY_REPORT_FORM);
+      setDurationText("00:00");
       return;
     }
     setLoadingReport(true);
@@ -243,6 +249,7 @@ export function RapportPage() {
         if (existing) {
           setReportId(existing.id);
           setExistingStatus(existing.status);
+          const duration = Number(existing.avgHandlingDuration) || 0;
           setState({
             incomingTotal: existing.incomingTotal,
             outgoingTotal: existing.outgoingTotal,
@@ -250,12 +257,15 @@ export function RapportPage() {
             missed: existing.missed,
             rdvTotal: existing.rdvTotal,
             smsTotal: existing.smsTotal,
+            avgHandlingDuration: duration,
             observations: existing.observations ?? "",
           });
+          setDurationText(formatDurationMmSs(duration));
         } else {
           setReportId(null);
           setExistingStatus(null);
           setState(EMPTY_REPORT_FORM);
+          setDurationText("00:00");
         }
       })
       .catch((err) => {
@@ -275,8 +285,17 @@ export function RapportPage() {
       setMessage("Erreur : " + msg);
       return;
     }
+    const parsedDuration = parseDurationMmSs(durationText);
+    if (parsedDuration === null) {
+      const msg = "Durée invalide. Utilisez le format mm:ss (ex. 03:45).";
+      toast.error(msg);
+      setMessage("Erreur : " + msg);
+      setDurationText(formatDurationMmSs(state.avgHandlingDuration));
+      return;
+    }
+    setDurationText(formatDurationMmSs(parsedDuration));
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
-         state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
+         state.rdvTotal, state.smsTotal, parsedDuration].some((n) => n < 0)) {
       const msg = "Les valeurs ne peuvent pas être négatives";
       toast.error(msg); setMessage("Erreur : " + msg);
       return;
@@ -284,8 +303,14 @@ export function RapportPage() {
 
     await run(async () => {
       try {
-        const report = await upsertReport({ date, campaignId, ...state });
+        const report = await upsertReport({
+          date,
+          campaignId,
+          ...state,
+          avgHandlingDuration: parsedDuration,
+        });
         setReportId(report.id);
+        setState((p) => ({ ...p, avgHandlingDuration: parsedDuration }));
         if (submit) {
           await submitReport(report.id);
           setExistingStatus("SUBMITTED");
@@ -397,6 +422,33 @@ export function RapportPage() {
             />
           </div>
         ))}
+        <div className="field" style={{ minWidth: 0 }}>
+          <label className="label" htmlFor="avgHandlingDuration">
+            <Timer size={14} style={{ marginRight: 6 }} />
+            Durée moyenne de traitement
+          </label>
+          <input
+            id="avgHandlingDuration"
+            className="input"
+            type="text"
+            inputMode="numeric"
+            placeholder="00:00"
+            disabled={isValidated || loadingReport}
+            style={isValidated ? { background: '#f8fafc', cursor: 'not-allowed' } : {}}
+            value={durationText}
+            onChange={(e) => setDurationText(e.target.value)}
+            onBlur={() => {
+              const parsed = parseDurationMmSs(durationText);
+              if (parsed === null) {
+                toast.error("Durée invalide. Utilisez le format mm:ss (ex. 03:45).");
+                setDurationText(formatDurationMmSs(state.avgHandlingDuration));
+                return;
+              }
+              setState((p) => ({ ...p, avgHandlingDuration: parsed }));
+              setDurationText(formatDurationMmSs(parsed));
+            }}
+          />
+        </div>
       </div>
 
       <div style={{ marginTop: 24 }} className="field">
@@ -665,6 +717,10 @@ export function ValidationPage() {
                   <div style={{ textAlign: "center" }}>
                     <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>Messages envoyés</div>
                     <div style={{ fontWeight: 800, color: "var(--secondary)" }}>{r.smsTotal}</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>DURÉE MOY.</div>
+                    <div style={{ fontWeight: 800 }}>{formatDurationMmSs(r.avgHandlingDuration ?? 0)}</div>
                   </div>
                 </div>
               </div>
@@ -3425,7 +3481,7 @@ function ReportsTable({
 }) {
   const { user } = useAuth();
   const canEditValidated = user?.role === "ADMIN" || user?.role === "SUPERVISEUR";
-  const colSpan = onEdit ? 11 : 10;
+  const colSpan = onEdit ? 12 : 11;
   return (
     <div className="card table-card">
       <h2 style={{ marginBottom: "20px" }}>{title}</h2>
@@ -3442,6 +3498,7 @@ function ReportsTable({
               <th>Manqués</th>
               <th>RDV</th>
               <th>Messages envoyés</th>
+              <th>Durée moy.</th>
               <th>Statut</th>
               {onEdit && <th>Actions</th>}
             </tr>
@@ -3465,6 +3522,7 @@ function ReportsTable({
                   <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
                   <td>{r.rdvTotal}</td>
                   <td>{r.smsTotal}</td>
+                  <td>{formatDurationMmSs(r.avgHandlingDuration ?? 0)}</td>
                   <td>
                     <span className={`badge ${getStatusBadgeClass(r.status)}`}>
                       {r.status}
@@ -3622,6 +3680,7 @@ interface CampaignSummary {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  avgHandlingDuration: number;
   conversionRate: string;
 }
 
@@ -3634,6 +3693,7 @@ interface DailySummary {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  avgHandlingDuration: number;
 }
 
 export function ReportingCampagnesPage() {
@@ -3674,6 +3734,7 @@ export function ReportingCampagnesPage() {
       if (campaignId) {
         const byDate: Record<string, DailySummary> = {};
         const workersByDate: Record<string, Set<string>> = {};
+        const durationItemsByDate: Record<string, { avgHandlingDuration: number; handled: number }[]> = {};
 
         reports.forEach((r) => {
           const d = r.date;
@@ -3688,9 +3749,11 @@ export function ReportingCampagnesPage() {
               missed: 0,
               rdvTotal: 0,
               smsTotal: 0,
+              avgHandlingDuration: 0,
             };
           }
           if (!workersByDate[d]) workersByDate[d] = new Set<string>();
+          if (!durationItemsByDate[d]) durationItemsByDate[d] = [];
           const worker = (r.user?.name || r.user?.email || "Inconnu").trim();
           if (worker) workersByDate[d].add(worker);
 
@@ -3700,12 +3763,17 @@ export function ReportingCampagnesPage() {
           byDate[d].missed += Number(r.missed) || 0;
           byDate[d].rdvTotal += Number(r.rdvTotal) || 0;
           byDate[d].smsTotal += Number(r.smsTotal) || 0;
+          durationItemsByDate[d].push({
+            avgHandlingDuration: Number(r.avgHandlingDuration) || 0,
+            handled: Number(r.handled) || 0,
+          });
         });
 
         const result = Object.values(byDate)
           .map((d) => ({
             ...d,
             workers: Array.from(workersByDate[d.date] || []).sort((a, b) => a.localeCompare(b, 'fr')),
+            avgHandlingDuration: weightedAvgDuration(durationItemsByDate[d.date] || []),
           }))
           .sort((a, b) => b.date.localeCompare(a.date));
 
@@ -3717,6 +3785,7 @@ export function ReportingCampagnesPage() {
       // Group by campaign
       const byCampaign: Record<string, CampaignSummary> = {};
       const workersByCampaign: Record<string, Set<string>> = {};
+      const durationItemsByCampaign: Record<string, { avgHandlingDuration: number; handled: number }[]> = {};
       reports.forEach((r) => {
         const cid = r.campaign?.id || 'unknown';
         const cname = r.campaign?.name || 'Inconnue';
@@ -3732,10 +3801,12 @@ export function ReportingCampagnesPage() {
             missed: 0,
             rdvTotal: 0,
             smsTotal: 0,
+            avgHandlingDuration: 0,
             conversionRate: '0.0',
           };
         }
         if (!workersByCampaign[cid]) workersByCampaign[cid] = new Set<string>();
+        if (!durationItemsByCampaign[cid]) durationItemsByCampaign[cid] = [];
         const worker = (r.user?.name || r.user?.email || "Inconnu").trim();
         if (worker) workersByCampaign[cid].add(worker);
         byCampaign[cid].reportCount++;
@@ -3745,12 +3816,17 @@ export function ReportingCampagnesPage() {
         byCampaign[cid].missed += Number(r.missed) || 0;
         byCampaign[cid].rdvTotal += Number(r.rdvTotal) || 0;
         byCampaign[cid].smsTotal += Number(r.smsTotal) || 0;
+        durationItemsByCampaign[cid].push({
+          avgHandlingDuration: Number(r.avgHandlingDuration) || 0,
+          handled: Number(r.handled) || 0,
+        });
       });
 
-      // Compute conversion rates
+      // Compute conversion rates and weighted durations
       const result = Object.values(byCampaign).map((c) => ({
         ...c,
         workers: Array.from(workersByCampaign[c.campaignId] || []).sort((a, b) => a.localeCompare(b, 'fr')),
+        avgHandlingDuration: weightedAvgDuration(durationItemsByCampaign[c.campaignId] || []),
         conversionRate: c.handled > 0 ? ((c.rdvTotal / c.handled) * 100).toFixed(1) : '0.0',
       }));
 
@@ -3775,8 +3851,8 @@ export function ReportingCampagnesPage() {
     const isSingle = !!campaignId;
 
     const headers = isSingle
-      ? ["Date", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés"]
-      : ["Campagne", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés"];
+      ? ["Date", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés", "Durée moy. traitement"]
+      : ["Campagne", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés", "Durée moy. traitement"];
 
     const rows = isSingle
       ? dailySummaries.map((d) => {
@@ -3790,6 +3866,7 @@ export function ReportingCampagnesPage() {
           d.missed,
           d.rdvTotal,
           d.smsTotal,
+          formatDurationMmSs(d.avgHandlingDuration),
         ];
       })
       : summaries.map((s) => {
@@ -3803,6 +3880,7 @@ export function ReportingCampagnesPage() {
           s.missed,
           s.rdvTotal,
           s.smsTotal,
+          formatDurationMmSs(s.avgHandlingDuration),
         ];
       });
 
@@ -3817,6 +3895,7 @@ export function ReportingCampagnesPage() {
         totals.missed,
         totals.rdvTotal,
         totals.smsTotal,
+        formatDurationMmSs(totals.avgHandlingDuration),
       ]);
     }
 
@@ -3830,6 +3909,7 @@ export function ReportingCampagnesPage() {
         totals.missed,
         totals.rdvTotal,
         totals.smsTotal,
+        formatDurationMmSs(totals.avgHandlingDuration),
       ]);
     }
 
@@ -3894,32 +3974,28 @@ export function ReportingCampagnesPage() {
 
   const totals = useMemo(() => {
     if (campaignId) {
-      return dailySummaries.reduce(
-        (acc, d) => ({
-          reportCount: acc.reportCount,
-          incomingTotal: acc.incomingTotal + d.incomingTotal,
-          outgoingTotal: acc.outgoingTotal + d.outgoingTotal,
-          handled: acc.handled + d.handled,
-          missed: acc.missed + d.missed,
-          rdvTotal: acc.rdvTotal + d.rdvTotal,
-          smsTotal: acc.smsTotal + d.smsTotal,
-        }),
-        { reportCount: 0, incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0 }
-      );
+      return {
+        reportCount: 0,
+        incomingTotal: dailySummaries.reduce((s, d) => s + d.incomingTotal, 0),
+        outgoingTotal: dailySummaries.reduce((s, d) => s + d.outgoingTotal, 0),
+        handled: dailySummaries.reduce((s, d) => s + d.handled, 0),
+        missed: dailySummaries.reduce((s, d) => s + d.missed, 0),
+        rdvTotal: dailySummaries.reduce((s, d) => s + d.rdvTotal, 0),
+        smsTotal: dailySummaries.reduce((s, d) => s + d.smsTotal, 0),
+        avgHandlingDuration: weightedAvgDuration(dailySummaries),
+      };
     }
 
-    return summaries.reduce(
-      (acc, s) => ({
-        reportCount: acc.reportCount + s.reportCount,
-        incomingTotal: acc.incomingTotal + s.incomingTotal,
-        outgoingTotal: acc.outgoingTotal + s.outgoingTotal,
-        handled: acc.handled + s.handled,
-        missed: acc.missed + s.missed,
-        rdvTotal: acc.rdvTotal + s.rdvTotal,
-        smsTotal: acc.smsTotal + s.smsTotal,
-      }),
-      { reportCount: 0, incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0 }
-    );
+    return {
+      reportCount: summaries.reduce((s, c) => s + c.reportCount, 0),
+      incomingTotal: summaries.reduce((s, c) => s + c.incomingTotal, 0),
+      outgoingTotal: summaries.reduce((s, c) => s + c.outgoingTotal, 0),
+      handled: summaries.reduce((s, c) => s + c.handled, 0),
+      missed: summaries.reduce((s, c) => s + c.missed, 0),
+      rdvTotal: summaries.reduce((s, c) => s + c.rdvTotal, 0),
+      smsTotal: summaries.reduce((s, c) => s + c.smsTotal, 0),
+      avgHandlingDuration: weightedAvgDuration(summaries),
+    };
   }, [campaignId, dailySummaries, summaries]);
 
   const totalConversion = totals.handled > 0 ? ((totals.rdvTotal / totals.handled) * 100).toFixed(1) : '0.0';
@@ -4064,7 +4140,7 @@ export function ReportingCampagnesPage() {
               ) : null}
             </div>
 
-            <table style={{ margin: 0, minWidth: campaignId ? "860px" : "900px" }}>
+            <table style={{ margin: 0, minWidth: campaignId ? "960px" : "1000px" }}>
             <thead>
               <tr>
                 {campaignId ? <th>Date</th> : null}
@@ -4076,6 +4152,7 @@ export function ReportingCampagnesPage() {
                 <th style={{ textAlign: "right" }}>Appels manqués</th>
                 <th style={{ textAlign: "right" }}>RDV</th>
                 <th style={{ textAlign: "right" }}>Messages envoyés</th>
+                <th style={{ textAlign: "right" }}>Durée moy.</th>
               </tr>
             </thead>
             <tbody>
@@ -4094,6 +4171,7 @@ export function ReportingCampagnesPage() {
                       {d.rdvTotal.toLocaleString('fr-FR')}
                     </td>
                     <td style={{ textAlign: "right" }}>{d.smsTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{formatDurationMmSs(d.avgHandlingDuration)}</td>
                   </tr>
                 ))
                 : summaries.map((s) => (
@@ -4110,6 +4188,7 @@ export function ReportingCampagnesPage() {
                       {s.rdvTotal.toLocaleString('fr-FR')}
                     </td>
                     <td style={{ textAlign: "right" }}>{s.smsTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{formatDurationMmSs(s.avgHandlingDuration)}</td>
                   </tr>
                 ))}
               {!campaignId ? (
@@ -4126,6 +4205,7 @@ export function ReportingCampagnesPage() {
                     {totals.rdvTotal.toLocaleString('fr-FR')}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{formatDurationMmSs(totals.avgHandlingDuration)}</td>
                 </tr>
               ) : (
                 <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
@@ -4141,6 +4221,7 @@ export function ReportingCampagnesPage() {
                     {totals.rdvTotal.toLocaleString('fr-FR')}
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{formatDurationMmSs(totals.avgHandlingDuration)}</td>
                 </tr>
               )}
             </tbody>

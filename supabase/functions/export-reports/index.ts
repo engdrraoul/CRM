@@ -108,7 +108,7 @@ serve(async (req) => {
 
     const fields =
       `select=date,campaign:Campaign(id,name),user:User!userId(name,email),` +
-      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status,observations`;
+      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,avgHandlingDuration,status,observations`;
 
     const filters: string[] = [];
     if (effectiveIds?.length === 1) {
@@ -136,9 +136,33 @@ serve(async (req) => {
     }
     const reports: any[] = await res.json();
 
+    const formatDuration = (totalSeconds: number) => {
+      const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    };
+
+    const weightedAvg = (items: { avgHandlingDuration?: number; handled?: number }[]) => {
+      let weightedSum = 0;
+      let weight = 0;
+      for (const item of items) {
+        const handled = Number(item.handled) || 0;
+        const duration = Number(item.avgHandlingDuration) || 0;
+        if (handled > 0) {
+          weightedSum += duration * handled;
+          weight += handled;
+        }
+      }
+      if (weight > 0) return Math.round(weightedSum / weight);
+      if (items.length === 0) return 0;
+      const sum = items.reduce((s, i) => s + (Number(i.avgHandlingDuration) || 0), 0);
+      return Math.round(sum / items.length);
+    };
+
     const HEADERS = [
       "Date", "Campagne", "Conseiller", "Reçus", "Émis",
-      "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations",
+      "Traités", "Manqués", "RDV", "SMS", "Durée moy.", "Statut", "Observations",
     ];
 
     const toRow = (r: any) => [
@@ -151,6 +175,7 @@ serve(async (req) => {
       r.missed ?? 0,
       r.rdvTotal ?? 0,
       r.smsTotal ?? 0,
+      formatDuration(r.avgHandlingDuration ?? 0),
       r.status ?? "",
       r.observations ?? "",
     ];
@@ -181,18 +206,19 @@ serve(async (req) => {
             campReports.reduce((s, r) => s + (r.missed ?? 0), 0),
             campReports.reduce((s, r) => s + (r.rdvTotal ?? 0), 0),
             campReports.reduce((s, r) => s + (r.smsTotal ?? 0), 0),
+            formatDuration(weightedAvg(campReports)),
           ]);
         }
         sheets.push(worksheet(
           "Résumé",
-          ["Campagne", "Nb rapports", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"],
+          ["Campagne", "Nb rapports", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Durée moy."],
           summaryRows,
           usedSheetNames,
         ));
 
         // One sheet per campaign
         for (const [campName, campReports] of Object.entries(byCampaign)) {
-          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations"];
+          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Durée moy.", "Statut", "Observations"];
           const rows = campReports.map((r: any) => [
             new Date(r.date + "T12:00:00").toLocaleDateString("fr-FR"),
             r.user?.name ?? r.user?.email ?? "",
@@ -202,6 +228,7 @@ serve(async (req) => {
             r.missed ?? 0,
             r.rdvTotal ?? 0,
             r.smsTotal ?? 0,
+            formatDuration(r.avgHandlingDuration ?? 0),
             r.status ?? "",
             r.observations ?? "",
           ]);

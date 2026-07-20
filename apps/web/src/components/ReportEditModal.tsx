@@ -3,6 +3,7 @@ import type { DailyReport } from "@crc/types";
 import { getReportEditLogs, updateReportById, type ReportEditLogRow } from "../db";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks/useAsync";
+import { formatDurationMmSs, parseDurationMmSs } from "../lib/duration";
 import { toast } from "sonner";
 import {
   Save,
@@ -17,6 +18,7 @@ import {
   PhoneMissed,
   ClipboardCheck,
   MessageSquare,
+  Timer,
 } from "lucide-react";
 
 type ReportFormState = {
@@ -26,6 +28,7 @@ type ReportFormState = {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  avgHandlingDuration: number;
   observations: string;
 };
 
@@ -36,6 +39,7 @@ const EMPTY_FORM: ReportFormState = {
   missed: 0,
   rdvTotal: 0,
   smsTotal: 0,
+  avgHandlingDuration: 0,
   observations: "",
 };
 
@@ -58,11 +62,13 @@ export interface ReportEditModalProps {
 export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalProps) {
   const { user } = useAuth();
   const [state, setState] = useState<ReportFormState>(EMPTY_FORM);
+  const [durationText, setDurationText] = useState("00:00");
   const [logs, setLogs] = useState<ReportEditLogRow[]>([]);
   const [busy, run] = useAsync();
 
   useEffect(() => {
     if (!report) return;
+    const duration = Number(report.avgHandlingDuration) || 0;
     setState({
       incomingTotal: report.incomingTotal,
       outgoingTotal: report.outgoingTotal,
@@ -70,8 +76,10 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
       missed: report.missed,
       rdvTotal: report.rdvTotal,
       smsTotal: report.smsTotal,
+      avgHandlingDuration: duration,
       observations: report.observations ?? "",
     });
+    setDurationText(formatDurationMmSs(duration));
   }, [report]);
 
   useEffect(() => {
@@ -107,20 +115,43 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
   const isValidatedLocked = report.status === "VALIDATED" && !canEditValidated;
   const canSubmit = isOwner && (report.status === "DRAFT" || report.status === "REJECTED");
 
+  function commitDuration(raw: string) {
+    const parsed = parseDurationMmSs(raw);
+    if (parsed === null) {
+      toast.error("Durée invalide. Utilisez le format mm:ss (ex. 03:45).");
+      setDurationText(formatDurationMmSs(state.avgHandlingDuration));
+      return false;
+    }
+    setState((p) => ({ ...p, avgHandlingDuration: parsed }));
+    setDurationText(formatDurationMmSs(parsed));
+    return true;
+  }
+
   async function save(submit = false) {
     if (isValidatedLocked) {
       toast.error("Ce rapport validé ne peut être modifié que par un superviseur ou un administrateur.");
       return;
     }
+    const parsedDuration = parseDurationMmSs(durationText);
+    if (parsedDuration === null) {
+      toast.error("Durée invalide. Utilisez le format mm:ss (ex. 03:45).");
+      setDurationText(formatDurationMmSs(state.avgHandlingDuration));
+      return;
+    }
+    setDurationText(formatDurationMmSs(parsedDuration));
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
-         state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
+         state.rdvTotal, state.smsTotal, parsedDuration].some((n) => n < 0)) {
       toast.error("Les valeurs ne peuvent pas être négatives");
       return;
     }
 
     await run(async () => {
       try {
-        await updateReportById(report!.id, state, { submit });
+        await updateReportById(
+          report!.id,
+          { ...state, avgHandlingDuration: parsedDuration },
+          { submit },
+        );
         toast.success(submit ? "Rapport soumis avec succès !" : "Rapport modifié avec succès.");
         onSaved();
         onClose();
@@ -230,6 +261,24 @@ export function ReportEditModal({ report, onClose, onSaved }: ReportEditModalPro
               />
             </div>
           ))}
+          <div className="field" style={{ minWidth: 0, marginBottom: 0 }}>
+            <label className="label" htmlFor="edit-avg-duration">
+              <Timer size={14} style={{ marginRight: 6 }} />
+              Durée moyenne de traitement
+            </label>
+            <input
+              id="edit-avg-duration"
+              className="input"
+              type="text"
+              inputMode="numeric"
+              placeholder="00:00"
+              disabled={isValidatedLocked}
+              style={isValidatedLocked ? { background: "#f8fafc", cursor: "not-allowed" } : {}}
+              value={durationText}
+              onChange={(e) => setDurationText(e.target.value)}
+              onBlur={() => commitDuration(durationText)}
+            />
+          </div>
         </div>
 
         <div className="field" style={{ marginTop: 20 }}>

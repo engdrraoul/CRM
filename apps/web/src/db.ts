@@ -370,6 +370,7 @@ export async function upsertReport(reportData: {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  avgHandlingDuration: number;
   observations?: string;
 }): Promise<{ id: string }> {
   const user = await requireUser();
@@ -436,6 +437,7 @@ export async function updateReportById(
     missed: number;
     rdvTotal: number;
     smsTotal: number;
+    avgHandlingDuration: number;
     observations?: string;
   },
   options?: { submit?: boolean },
@@ -449,6 +451,7 @@ export async function updateReportById(
       p_missed: reportData.missed,
       p_rdv_total: reportData.rdvTotal,
       p_sms_total: reportData.smsTotal,
+      p_avg_handling_duration: reportData.avgHandlingDuration,
       p_observations: reportData.observations || null,
       p_submit: options?.submit ?? false,
     });

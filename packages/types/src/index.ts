@@ -24,6 +24,8 @@ export interface DailyReport {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  /** Average handling duration in total seconds (displayed as mm:ss). */
+  avgHandlingDuration?: number;
   observations: string | null;
   rejectionReason: string | null;
   status: ReportStatus;
